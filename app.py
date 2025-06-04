@@ -21,7 +21,8 @@ SCOPES = [
 ]
 
 # Your redirect URI (must match what's in Google Cloud Console)
-REDIRECT_URI = "https://your-deployment-url.com/oauth2callback"
+REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
+
 
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # Enable HTTP for dev
 
