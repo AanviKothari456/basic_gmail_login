@@ -123,8 +123,10 @@ def dashboard():
             "similarity_boost": 0.5
         }
     }
+    
+    headers["accept"] = "audio/mpeg"
+    audio_response = requests.post(eleven_url, headers=headers, json=payload, stream=False)
 
-    audio_response = requests.post(eleven_url, headers=headers, json=payload)
     audio_base64 = base64.b64encode(audio_response.content).decode('utf-8')
 
     return f"""
@@ -145,20 +147,40 @@ def dashboard():
         </form>
 
         <script>
-        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-        recognition.continuous = false;
-        recognition.lang = 'en-US';
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        
+        if (!SpeechRecognition) {
+            alert("Your browser does not support speech recognition. Try Chrome.");
+        } else {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'en-US';
+        
+            function startRecording() {
+                console.log("🎤 Starting recognition...");
+                recognition.start();
+            }
+        
+            recognition.onstart = () => {
+                console.log("🎙️ Mic open");
+            };
+        
+            recognition.onerror = (event) => {
+                console.error("Speech recognition error:", event.error);
+                alert("Mic error: " + event.error);
+            };
+        
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                console.log("🗣️ You said:", transcript);
+                document.getElementById("transcript").innerText = "You said: " + transcript;
+                document.getElementById("replyText").value = transcript;
+            };
+        
+            window.startRecording = startRecording;
+        }
+</script>
 
-        function startRecording() {{
-            recognition.start();
-        }}
-
-        recognition.onresult = function(event) {{
-            const transcript = event.results[0][0].transcript;
-            document.getElementById("transcript").innerText = "You said: " + transcript;
-            document.getElementById("replyText").value = transcript;
-        }};
-        </script>
     """
 
 
