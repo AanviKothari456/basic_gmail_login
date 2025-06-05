@@ -32,6 +32,7 @@ def index():
 
 @app.route("/login")
 def login():
+    session.clear() 
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
