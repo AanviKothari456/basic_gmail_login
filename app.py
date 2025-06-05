@@ -17,8 +17,12 @@ CLIENT_SECRETS_FILE = "credentials.json"
 # Scopes required for Gmail read + send
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send"
+    "https://www.googleapis.com/auth/gmail.send",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile"
 ]
+
 
 # Your redirect URI (must match what's in Google Cloud Console)
 REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
