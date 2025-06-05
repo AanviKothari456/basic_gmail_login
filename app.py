@@ -117,7 +117,10 @@ def latest_email():
         body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8') if 'data' in payload['body'] else msg.get('snippet', '')
 
     audio_base64 = ""
+    text_to_read = f"Subject: {subject}. Body: {body}"
+
     try:
+        # 🎙️ Try ElevenLabs first
         eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
         headers = {
             "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
@@ -125,29 +128,28 @@ def latest_email():
             "accept": "audio/mpeg"
         }
         payload = {
-            "text": f"Subject: {subject}. Body: {body}",
+            "text": text_to_read,
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.5
             }
         }
-        audio_response = requests.post(eleven_url, headers=headers, json=payload)
-        audio_response.raise_for_status()
-        audio_base64 = base64.b64encode(audio_response.content).decode("utf-8")
-    except Exception:
-        # 🔊 Google TTS Fallback
-        from gtts import gTTS
-        tts = gTTS(f"Subject: {subject}. Email body: {body}")
-        tts.save("fallback.mp3")
-        with open("fallback.mp3", "rb") as f:
-            audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+        response = requests.post(eleven_url, headers=headers, json=payload)
+        response.raise_for_status()
+        audio_base64 = base64.b64encode(response.content).decode("utf-8")
 
-    return jsonify({
-        "email": profile['emailAddress'],
-        "subject": subject,
-        "body": body,
-        "audio_base64": audio_base64
-    })
+    except Exception as e:
+        print(f"⚠️ ElevenLabs failed, falling back to Google TTS. Error: {e}")
+        try:
+            from gtts import gTTS
+            tts = gTTS(text_to_read)
+            tts.save("fallback.mp3")
+            with open("fallback.mp3", "rb") as f:
+                audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as fallback_error:
+            print(f"❌ Google TTS also failed: {fallback_error}")
+            return jsonify({"error": "Both ElevenLabs and Google TTS failed"}), 500
+
 
 # ─── Send Voice Reply ────────────────────────────────────────
 
