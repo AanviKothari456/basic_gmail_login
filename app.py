@@ -75,7 +75,7 @@ def oauth2callback():
         'client_secret': credentials.client_secret,
         'scopes': list(credentials.scopes)
     }
-    return redirect("https://your-frontend.vercel.app")  # redirect to your frontend
+    return redirect("https://fe-gmail-login-kde3.vercel.app")  # redirect to your frontend
 
 # ─── Get Latest Email & ElevenLabs Audio ─────────────────────
 
