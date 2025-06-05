@@ -16,8 +16,11 @@ app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'
 app.config['SESSION_COOKIE_SECURE'] = True
+
+CORS(app, supports_credentials=True, origins=["https://fe-gmail-login-kde3.vercel.app"])
+
 Session(app)
-CORS(app, supports_credentials=True)  # 🛠️ Allow frontend to send cookies
+
 app.secret_key = "REPLACE_WITH_RANDOM_SECRET"
 
 # ─── Google OAuth Config ─────────────────────────────────────
