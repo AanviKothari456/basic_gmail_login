@@ -80,7 +80,8 @@ def oauth2callback():
         'client_secret': credentials.client_secret,
         'scopes': list(credentials.scopes)
     }
-    return redirect("https://fe-gmail-login-kde3.vercel.app")  # 🎯 Your frontend
+    return redirect("https://fe-gmail-login-kde3.vercel.app?logged_in=true")
+
 
 # ─── Get Latest Email & Audio ────────────────────────────────
 
