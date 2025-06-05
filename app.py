@@ -1,4 +1,5 @@
 # File: app.py
+from flask_session import Session
 
 import os
 import base64
@@ -12,6 +13,10 @@ from email.mime.text import MIMEText
 
 # ─── Flask App Setup ─────────────────────────────────────────
 app = Flask(__name__)
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
+Session(app)
 CORS(app, supports_credentials=True)  # 🛠️ Allow frontend to send cookies
 app.secret_key = "REPLACE_WITH_RANDOM_SECRET"
 
@@ -81,7 +86,9 @@ def oauth2callback():
 
 @app.route("/latest_email")
 def latest_email():
+    print("🧠 SESSION KEYS:", list(session.keys()))
     if 'credentials' not in session:
+        print("❌ Not logged in — no credentials in session")
         return jsonify({"error": "Not logged in"}), 401
 
     creds = google.oauth2.credentials.Credentials(**session['credentials'])
