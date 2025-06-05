@@ -1,9 +1,7 @@
 # File: app.py
 
 import os
-import pathlib
-import pickle
-from flask import Flask, redirect, request, session, url_for
+from flask import Flask, redirect, request, session
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 import google.oauth2.credentials
@@ -23,10 +21,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile"
 ]
 
-
 # Your redirect URI (must match what's in Google Cloud Console)
 REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
-
 
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # Enable HTTP for dev
 
@@ -36,7 +32,7 @@ def index():
 
 @app.route("/login")
 def login():
-    session.clear() 
+    session.clear()  # Clear previous session to avoid scope mismatch
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
@@ -44,21 +40,28 @@ def login():
     )
     auth_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true'
+        include_granted_scopes='false',  # prevent old scopes from sneaking in
+        prompt='consent'                 # force re-consent with correct scopes
     )
     session['state'] = state
     return redirect(auth_url)
 
 @app.route("/oauth2callback")
 def oauth2callback():
-    state = session['state']
+    state = session.get('state')
+    if not state:
+        return "Session state missing. Please try logging in again.", 400
+
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
         state=state,
         redirect_uri=REDIRECT_URI
     )
-    flow.fetch_token(authorization_response=request.url)
+    try:
+        flow.fetch_token(authorization_response=request.url)
+    except Exception as e:
+        return f"<h3>OAuth failed: {str(e)}</h3>", 400
 
     credentials = flow.credentials
     session['credentials'] = {
@@ -76,10 +79,13 @@ def dashboard():
     if 'credentials' not in session:
         return redirect("/login")
 
-    creds = google.oauth2.credentials.Credentials(**session['credentials'])
-    service = build('gmail', 'v1', credentials=creds)
-    profile = service.users().getProfile(userId='me').execute()
-    return f"<h2>Welcome, {profile['emailAddress']}!</h2>"
+    try:
+        creds = google.oauth2.credentials.Credentials(**session['credentials'])
+        service = build('gmail', 'v1', credentials=creds)
+        profile = service.users().getProfile(userId='me').execute()
+        return f"<h2>Welcome, {profile['emailAddress']}!</h2>"
+    except Exception as e:
+        return f"<h3>Error accessing Gmail API: {str(e)}</h3>", 500
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
