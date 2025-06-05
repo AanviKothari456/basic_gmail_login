@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 
 # ─── Flask App Setup ─────────────────────────────────────────
 app = Flask(__name__)
-CORS(app)  # Allow all origins (or use origins=["https://your-frontend.vercel.app"])
+CORS(app, supports_credentials=True)  # 🛠️ Allow frontend to send cookies
 app.secret_key = "REPLACE_WITH_RANDOM_SECRET"
 
 # ─── Google OAuth Config ─────────────────────────────────────
@@ -75,9 +75,9 @@ def oauth2callback():
         'client_secret': credentials.client_secret,
         'scopes': list(credentials.scopes)
     }
-    return redirect("https://fe-gmail-login-kde3.vercel.app")  # redirect to your frontend
+    return redirect("https://fe-gmail-login-kde3.vercel.app")  # 🎯 Your frontend
 
-# ─── Get Latest Email & ElevenLabs Audio ─────────────────────
+# ─── Get Latest Email & Audio ────────────────────────────────
 
 @app.route("/latest_email")
 def latest_email():
@@ -108,22 +108,31 @@ def latest_email():
     else:
         body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8') if 'data' in payload['body'] else msg.get('snippet', '')
 
-    # ElevenLabs audio
-    eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
-    headers = {
-        "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
-        "Content-Type": "application/json",
-        "accept": "audio/mpeg"
-    }
-    payload = {
-        "text": f"Subject: {subject}. Body: {body}",
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.5
+    audio_base64 = ""
+    try:
+        eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
+        headers = {
+            "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
+            "Content-Type": "application/json",
+            "accept": "audio/mpeg"
         }
-    }
-    audio_response = requests.post(eleven_url, headers=headers, json=payload)
-    audio_base64 = base64.b64encode(audio_response.content).decode("utf-8")
+        payload = {
+            "text": f"Subject: {subject}. Body: {body}",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.5
+            }
+        }
+        audio_response = requests.post(eleven_url, headers=headers, json=payload)
+        audio_response.raise_for_status()
+        audio_base64 = base64.b64encode(audio_response.content).decode("utf-8")
+    except Exception:
+        # 🔊 Google TTS Fallback
+        from gtts import gTTS
+        tts = gTTS(f"Subject: {subject}. Email body: {body}")
+        tts.save("fallback.mp3")
+        with open("fallback.mp3", "rb") as f:
+            audio_base64 = base64.b64encode(f.read()).decode("utf-8")
 
     return jsonify({
         "email": profile['emailAddress'],
@@ -165,7 +174,7 @@ def send_reply():
     service.users().messages().send(userId='me', body={'raw': raw, 'threadId': thread_id}).execute()
     return jsonify({"status": "Reply sent!"})
 
-# ─── Main ────────────────────────────────────────────────────
+# ─── Run Server ──────────────────────────────────────────────
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
