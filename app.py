@@ -1,18 +1,23 @@
 # File: app.py
 
 import os
-from flask import Flask, redirect, request, session
+import base64
+import requests
+from flask import Flask, redirect, request, session, jsonify
+from flask_cors import CORS
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 import google.oauth2.credentials
+from email.mime.text import MIMEText
 
+# ─── Flask App Setup ─────────────────────────────────────────
 app = Flask(__name__)
+CORS(app)  # Allow all origins (or use origins=["https://your-frontend.vercel.app"])
 app.secret_key = "REPLACE_WITH_RANDOM_SECRET"
 
-# OAuth2 client secrets file from Google Cloud Console
+# ─── Google OAuth Config ─────────────────────────────────────
 CLIENT_SECRETS_FILE = "credentials.json"
-
-# Scopes required for Gmail read + send
+REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
@@ -20,11 +25,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile"
 ]
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
-# Your redirect URI (must match what's in Google Cloud Console)
-REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
-
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # Enable HTTP for dev
+# ─── Routes ──────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -32,7 +35,7 @@ def index():
 
 @app.route("/login")
 def login():
-    session.clear()  # Clear previous session to avoid scope mismatch
+    session.clear()
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
@@ -40,8 +43,8 @@ def login():
     )
     auth_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='false',  # prevent old scopes from sneaking in
-        prompt='consent'                 # force re-consent with correct scopes
+        include_granted_scopes='false',
+        prompt='consent'
     )
     session['state'] = state
     return redirect(auth_url)
@@ -72,33 +75,29 @@ def oauth2callback():
         'client_secret': credentials.client_secret,
         'scopes': list(credentials.scopes)
     }
-    return redirect("/dashboard")
+    return redirect("https://your-frontend.vercel.app")  # redirect to your frontend
 
-import base64
-import requests
+# ─── Get Latest Email & ElevenLabs Audio ─────────────────────
 
-@app.route("/dashboard")
-def dashboard():
+@app.route("/latest_email")
+def latest_email():
     if 'credentials' not in session:
-        return redirect("/login")
+        return jsonify({"error": "Not logged in"}), 401
 
     creds = google.oauth2.credentials.Credentials(**session['credentials'])
     service = build('gmail', 'v1', credentials=creds)
     profile = service.users().getProfile(userId='me').execute()
 
-    # Fetch latest unread
     results = service.users().messages().list(userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=1).execute()
     messages = results.get('messages', [])
-
     if not messages:
-        return "<h2>No unread emails found</h2>"
+        return jsonify({"message": "No unread emails found."})
 
     msg_id = messages[0]['id']
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-
     subject = next((h['value'] for h in msg['payload']['headers'] if h['name'] == 'Subject'), "No Subject")
 
-    # Get plain text body
+    # Extract body
     payload = msg['payload']
     parts = payload.get('parts', [])
     if parts:
@@ -109,113 +108,64 @@ def dashboard():
     else:
         body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8') if 'data' in payload['body'] else msg.get('snippet', '')
 
-
-    # 🗣️ Use ElevenLabs to synthesize speech
-    eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"  # Rachel's voice ID
+    # ElevenLabs audio
+    eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
     headers = {
         "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "accept": "audio/mpeg"
     }
     payload = {
-        "text": f"Subject: {subject}. Email body: {body}",
+        "text": f"Subject: {subject}. Body: {body}",
         "voice_settings": {
             "stability": 0.5,
             "similarity_boost": 0.5
         }
     }
-    
-    headers["accept"] = "audio/mpeg"
-    audio_response = requests.post(eleven_url, headers=headers, json=payload, stream=False)
+    audio_response = requests.post(eleven_url, headers=headers, json=payload)
+    audio_base64 = base64.b64encode(audio_response.content).decode("utf-8")
 
-    audio_base64 = base64.b64encode(audio_response.content).decode('utf-8')
+    return jsonify({
+        "email": profile['emailAddress'],
+        "subject": subject,
+        "body": body,
+        "audio_base64": audio_base64
+    })
 
-    return f"""
-        <h2>Welcome, {profile['emailAddress']}!</h2>
-        <h3>Latest Email</h3>
-        <p><b>Subject:</b> {subject}</p>
-        <p><b>Body:</b><br>{body}</p>
-        <audio controls>
-            <source src="data:audio/mpeg;base64,{audio_base64}" type="audio/mpeg">
-            Your browser does not support the audio element.
-        </audio><br><br>
-
-        <button onclick="startRecording()">🎤 Reply with Voice</button>
-        <p id="transcript"></p>
-        <form method="POST" action="/send_reply">
-            <input type="hidden" name="reply" id="replyText">
-            <button type="submit">Send Reply</button>
-        </form>
-
-        <script>
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        
-        if (!SpeechRecognition) {
-            alert("Your browser does not support speech recognition. Try Chrome.");
-        } else {
-            const recognition = new SpeechRecognition();
-            recognition.continuous = false;
-            recognition.lang = 'en-US';
-        
-            function startRecording() {
-                console.log("🎤 Starting recognition...");
-                recognition.start();
-            }
-        
-            recognition.onstart = () => {
-                console.log("🎙️ Mic open");
-            };
-        
-            recognition.onerror = (event) => {
-                console.error("Speech recognition error:", event.error);
-                alert("Mic error: " + event.error);
-            };
-        
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                console.log("🗣️ You said:", transcript);
-                document.getElementById("transcript").innerText = "You said: " + transcript;
-                document.getElementById("replyText").value = transcript;
-            };
-        
-            window.startRecording = startRecording;
-        }
-</script>
-
-    """
-
+# ─── Send Voice Reply ────────────────────────────────────────
 
 @app.route("/send_reply", methods=["POST"])
 def send_reply():
     if 'credentials' not in session:
-        return redirect("/login")
+        return jsonify({"error": "Not logged in"}), 401
 
-    reply_text = request.form.get("reply", "").strip()
+    data = request.get_json()
+    reply_text = data.get("reply", "").strip()
+    if not reply_text:
+        return jsonify({"error": "No reply provided"}), 400
+
     creds = google.oauth2.credentials.Credentials(**session['credentials'])
     service = build('gmail', 'v1', credentials=creds)
 
-    # Fetch latest unread message to reply to
     results = service.users().messages().list(userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=1).execute()
     messages = results.get('messages', [])
-
     if not messages:
-        return "<p>No email to reply to</p>"
+        return jsonify({"message": "No email to reply to"}), 400
 
     msg_id = messages[0]['id']
     msg = service.users().messages().get(userId='me', id=msg_id, format='metadata').execute()
     thread_id = msg['threadId']
     sender = next((h['value'] for h in msg['payload']['headers'] if h['name'] == 'From'), "")
 
-    # Create MIME reply
-    from email.mime.text import MIMEText
-    import base64
     mime_message = MIMEText(reply_text)
     mime_message['To'] = sender
     mime_message['Subject'] = "Re: " + next((h['value'] for h in msg['payload']['headers'] if h['name'] == 'Subject'), "")
     raw = base64.urlsafe_b64encode(mime_message.as_bytes()).decode()
 
     service.users().messages().send(userId='me', body={'raw': raw, 'threadId': thread_id}).execute()
-    return "<h2>Reply sent!</h2><a href='/dashboard'>Back to Dashboard</a>"
+    return jsonify({"status": "Reply sent!"})
 
+# ─── Main ────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
