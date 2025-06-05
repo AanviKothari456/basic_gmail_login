@@ -79,13 +79,41 @@ def dashboard():
     if 'credentials' not in session:
         return redirect("/login")
 
-    try:
-        creds = google.oauth2.credentials.Credentials(**session['credentials'])
-        service = build('gmail', 'v1', credentials=creds)
-        profile = service.users().getProfile(userId='me').execute()
-        return f"<h2>Welcome, {profile['emailAddress']}!</h2>"
-    except Exception as e:
-        return f"<h3>Error accessing Gmail API: {str(e)}</h3>", 500
+    creds = google.oauth2.credentials.Credentials(**session['credentials'])
+    service = build('gmail', 'v1', credentials=creds)
+    profile = service.users().getProfile(userId='me').execute()
+
+    # Fetch latest unread email
+    results = service.users().messages().list(
+        userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=1).execute()
+    
+    messages = results.get('messages', [])
+    
+    if not messages:
+        latest_email_info = "<p>No unread emails found.</p>"
+    else:
+        msg_id = messages[0]['id']
+        msg = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['Subject']).execute()
+
+        subject = "No Subject"
+        for header in msg['payload'].get('headers', []):
+            if header['name'] == 'Subject':
+                subject = header['value']
+                break
+        
+        snippet = msg.get('snippet', '')
+
+        latest_email_info = f"""
+            <h3>Latest Unread Email</h3>
+            <p><strong>Subject:</strong> {subject}</p>
+            <p><strong>Snippet:</strong> {snippet}</p>
+        """
+
+    return f"""
+        <h2>Welcome, {profile['emailAddress']}!</h2>
+        {latest_email_info}
+    """
+
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
