@@ -70,9 +70,12 @@ def oauth2callback():
         'token_uri': credentials.token_uri,
         'client_id': credentials.client_id,
         'client_secret': credentials.client_secret,
-        'scopes': credentials.scopes
+        'scopes': list(credentials.scopes)
     }
     return redirect("/dashboard")
+
+import base64
+import requests
 
 @app.route("/dashboard")
 def dashboard():
@@ -83,36 +86,113 @@ def dashboard():
     service = build('gmail', 'v1', credentials=creds)
     profile = service.users().getProfile(userId='me').execute()
 
-    # Fetch latest unread email
-    results = service.users().messages().list(
-        userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=1).execute()
-    
+    # Fetch latest unread
+    results = service.users().messages().list(userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=1).execute()
     messages = results.get('messages', [])
-    
+
     if not messages:
-        latest_email_info = "<p>No unread emails found.</p>"
-    else:
-        msg_id = messages[0]['id']
-        msg = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['Subject']).execute()
+        return "<h2>No unread emails found</h2>"
 
-        subject = "No Subject"
-        for header in msg['payload'].get('headers', []):
-            if header['name'] == 'Subject':
-                subject = header['value']
+    msg_id = messages[0]['id']
+    msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+
+    subject = next((h['value'] for h in msg['payload']['headers'] if h['name'] == 'Subject'), "No Subject")
+
+    # Get plain text body
+    payload = msg['payload']
+    parts = payload.get('parts', [])
+    if parts:
+        for part in parts:
+            if part['mimeType'] == 'text/plain':
+                body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
                 break
-        
-        snippet = msg.get('snippet', '')
+    else:
+        body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8') if 'data' in payload['body'] else msg.get('snippet', '')
 
-        latest_email_info = f"""
-            <h3>Latest Unread Email</h3>
-            <p><strong>Subject:</strong> {subject}</p>
-            <p><strong>Snippet:</strong> {snippet}</p>
-        """
+
+    # 🗣️ Use ElevenLabs to synthesize speech
+    eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"  # Rachel's voice ID
+    headers = {
+        "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "text": f"Subject: {subject}. Email body: {body}",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.5
+        }
+    }
+
+    audio_response = requests.post(eleven_url, headers=headers, json=payload)
+    audio_base64 = base64.b64encode(audio_response.content).decode('utf-8')
 
     return f"""
         <h2>Welcome, {profile['emailAddress']}!</h2>
-        {latest_email_info}
+        <h3>Latest Email</h3>
+        <p><b>Subject:</b> {subject}</p>
+        <p><b>Body:</b><br>{body}</p>
+        <audio controls>
+            <source src="data:audio/mpeg;base64,{audio_base64}" type="audio/mpeg">
+            Your browser does not support the audio element.
+        </audio><br><br>
+
+        <button onclick="startRecording()">🎤 Reply with Voice</button>
+        <p id="transcript"></p>
+        <form method="POST" action="/send_reply">
+            <input type="hidden" name="reply" id="replyText">
+            <button type="submit">Send Reply</button>
+        </form>
+
+        <script>
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.continuous = false;
+        recognition.lang = 'en-US';
+
+        function startRecording() {{
+            recognition.start();
+        }}
+
+        recognition.onresult = function(event) {{
+            const transcript = event.results[0][0].transcript;
+            document.getElementById("transcript").innerText = "You said: " + transcript;
+            document.getElementById("replyText").value = transcript;
+        }};
+        </script>
     """
+
+
+@app.route("/send_reply", methods=["POST"])
+def send_reply():
+    if 'credentials' not in session:
+        return redirect("/login")
+
+    reply_text = request.form.get("reply", "").strip()
+    creds = google.oauth2.credentials.Credentials(**session['credentials'])
+    service = build('gmail', 'v1', credentials=creds)
+
+    # Fetch latest unread message to reply to
+    results = service.users().messages().list(userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=1).execute()
+    messages = results.get('messages', [])
+
+    if not messages:
+        return "<p>No email to reply to</p>"
+
+    msg_id = messages[0]['id']
+    msg = service.users().messages().get(userId='me', id=msg_id, format='metadata').execute()
+    thread_id = msg['threadId']
+    sender = next((h['value'] for h in msg['payload']['headers'] if h['name'] == 'From'), "")
+
+    # Create MIME reply
+    from email.mime.text import MIMEText
+    import base64
+    mime_message = MIMEText(reply_text)
+    mime_message['To'] = sender
+    mime_message['Subject'] = "Re: " + next((h['value'] for h in msg['payload']['headers'] if h['name'] == 'Subject'), "")
+    raw = base64.urlsafe_b64encode(mime_message.as_bytes()).decode()
+
+    service.users().messages().send(userId='me', body={'raw': raw, 'threadId': thread_id}).execute()
+    return "<h2>Reply sent!</h2><a href='/dashboard'>Back to Dashboard</a>"
 
 
 if __name__ == '__main__':
