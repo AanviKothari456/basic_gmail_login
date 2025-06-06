@@ -1,7 +1,6 @@
 # File: app.py
 import os
 import base64
-import requests
 from flask import Flask, redirect, request, session, jsonify
 from flask_cors import CORS
 from flask_session import Session
@@ -117,7 +116,6 @@ def latest_email():
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    # If a specific msg_id is provided, use it; otherwise fetch the single latest unread.
     msg_id = request.args.get("msg_id")
     if not msg_id:
         results = service.users().messages().list(
@@ -132,13 +130,11 @@ def latest_email():
         userId="me", id=msg_id, format="full"
     ).execute()
 
-    # Extract subject
     subject = next(
         (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
         "No Subject"
     )
 
-    # Extract plain-text body
     payload = msg["payload"]
     parts = payload.get("parts", [])
     if parts:
@@ -156,7 +152,6 @@ def latest_email():
             else msg.get("snippet", "")
         )
 
-    # Generate a two-line summary using OpenAI
     prompt_text = f"""
 Summarize the following email in exactly two lines, focusing on the key details:
 
@@ -189,23 +184,21 @@ def send_reply():
 
     data = request.get_json()
     user_instruction = data.get("reply", "").strip()
+    msg_id = data.get("msg_id", "").strip()
     if not user_instruction:
         return jsonify({"error": "No instruction provided"}), 400
+    if not msg_id:
+        return jsonify({"error": "No msg_id provided"}), 400
 
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    results = service.users().messages().list(
-        userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
-    ).execute()
-    messages = results.get("messages", [])
-    if not messages:
-        return jsonify({"message": "No email to reply to"}), 400
-
-    msg_id = messages[0]["id"]
-    msg = service.users().messages().get(
-        userId="me", id=msg_id, format="full"
-    ).execute()
+    try:
+        msg = service.users().messages().get(
+            userId="me", id=msg_id, format="full"
+        ).execute()
+    except Exception:
+        return jsonify({"error": "Could not fetch that message"}), 400
 
     original_subject = next(
         (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
@@ -265,21 +258,20 @@ def send_email():
 
     data = request.get_json()
     final_reply = data.get("reply_text", "").strip()
+    msg_id = data.get("msg_id", "").strip()
     if not final_reply:
         return jsonify({"error": "No reply text provided"}), 400
+    if not msg_id:
+        return jsonify({"error": "No msg_id provided"}), 400
 
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    results = service.users().messages().list(
-        userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
-    ).execute()
-    messages = results.get("messages", [])
-    if not messages:
-        return jsonify({"message": "No email to reply to"}), 400
+    try:
+        msg = service.users().messages().get(userId="me", id=msg_id, format="metadata").execute()
+    except Exception:
+        return jsonify({"error": "Could not fetch that message"}), 400
 
-    msg_id = messages[0]["id"]
-    msg = service.users().messages().get(userId="me", id=msg_id, format="metadata").execute()
     thread_id = msg["threadId"]
     sender = next((h["value"] for h in msg["payload"]["headers"] if h["name"] == "From"), "")
 
