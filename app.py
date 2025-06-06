@@ -41,9 +41,11 @@ SCOPES = [
 ]
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
+
 @app.route("/")
 def index():
     return "<a href='/login'>Login with Gmail</a>"
+
 
 @app.route("/login")
 def login():
@@ -60,6 +62,7 @@ def login():
     )
     session["state"] = state
     return redirect(auth_url)
+
 
 @app.route("/oauth2callback")
 def oauth2callback():
@@ -89,6 +92,23 @@ def oauth2callback():
     }
     return redirect("https://fe-gmail-login-kde3.vercel.app?logged_in=true")
 
+
+@app.route("/unread_ids")
+def unread_ids():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
+
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    results = service.users().messages().list(
+        userId="me", labelIds=["INBOX", "UNREAD"]
+    ).execute()
+    messages = results.get("messages", [])
+    ids = [m["id"] for m in messages]
+    return jsonify({"ids": ids})
+
+
 @app.route("/latest_email")
 def latest_email():
     if "credentials" not in session:
@@ -97,14 +117,17 @@ def latest_email():
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    results = service.users().messages().list(
-        userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
-    ).execute()
-    messages = results.get("messages", [])
-    if not messages:
-        return jsonify({"message": "No unread emails found."})
+    # If a specific msg_id is provided, use it; otherwise fetch the single latest unread.
+    msg_id = request.args.get("msg_id")
+    if not msg_id:
+        results = service.users().messages().list(
+            userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
+        ).execute()
+        messages = results.get("messages", [])
+        if not messages:
+            return jsonify({"message": "No unread emails found."})
+        msg_id = messages[0]["id"]
 
-    msg_id = messages[0]["id"]
     msg = service.users().messages().get(
         userId="me", id=msg_id, format="full"
     ).execute()
@@ -152,10 +175,12 @@ Summarize the following email in exactly two lines, focusing on the key details:
         summary = "Error generating summary: " + str(e)
 
     return jsonify({
+        "msg_id": msg_id,
         "subject": subject,
         "body": body,
         "summary": summary
     })
+
 
 @app.route("/send_reply", methods=["POST"])
 def send_reply():
@@ -167,7 +192,6 @@ def send_reply():
     if not user_instruction:
         return jsonify({"error": "No instruction provided"}), 400
 
-    # Fetch the latest unread email again
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
@@ -183,13 +207,11 @@ def send_reply():
         userId="me", id=msg_id, format="full"
     ).execute()
 
-    # Extract original subject
     original_subject = next(
         (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
         "No Subject"
     )
 
-    # Extract original body
     payload = msg["payload"]
     parts = payload.get("parts", [])
     if parts:
@@ -207,7 +229,6 @@ def send_reply():
             else msg.get("snippet", "")
         )
 
-    # Build the prompt for OpenAI
     prompt_text = f"""
 You are a courteous, professional email assistant.
 The original email had this subject: "{original_subject}"
@@ -236,6 +257,7 @@ Please draft a well-formatted email reply that:
 
     return jsonify({"formatted_reply": formatted_reply})
 
+
 @app.route("/send_email", methods=["POST"])
 def send_email():
     if "credentials" not in session:
@@ -246,7 +268,6 @@ def send_email():
     if not final_reply:
         return jsonify({"error": "No reply text provided"}), 400
 
-    # Re‐fetch the latest unread message to get thread & from-address
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
@@ -277,6 +298,7 @@ def send_email():
         return jsonify({"status": "sent"})
     except Exception as e:
         return jsonify({"error": f"Gmail send failed: {str(e)}"}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
