@@ -149,7 +149,7 @@ def latest_email():
         response = requests.post(eleven_url, headers=headers, json=payload_json)
         response.raise_for_status()
         audio_base64 = base64.b64encode(response.content).decode("utf-8")
-    except Exception:
+    except Exception as e:
         print("⚠ ElevenLabs TTS error:", e)   # log the actual error
         audio_base64 = ""
 
