@@ -1,91 +1,245 @@
-// File: script.js
-const BASE_URL = "https://basic-gmail-login.onrender.com";
+# File: app.py
+import os
+import base64
+import requests
+import openai
+from flask import Flask, redirect, request, session, jsonify
+from flask_cors import CORS
+from flask_session import Session
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+import google.oauth2.credentials
+from email.mime.text import MIMEText
 
-async function login() {
-  window.location.href = `${BASE_URL}/login`;
-}
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "REPLACE_WITH_RANDOM_SECRET")
 
-async function loadEmail() {
-  try {
-    const res = await fetch(`${BASE_URL}/latest_email`, { credentials: "include" });
-    if (res.status === 401) {
-      document.getElementById("content").style.display = "none";
-      return;
+# Session and CORS configuration
+app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_COOKIE_SAMESITE"] = "None"
+app.config["SESSION_COOKIE_SECURE"] = True
+Session(app)
+
+CORS(
+    app,
+    supports_credentials=True,
+    origins=["https://fe-gmail-login-kde3.vercel.app"]
+)
+
+# Google OAuth configuration
+CLIENT_SECRETS_FILE = "credentials.json"
+REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+# OpenAI configuration
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+@app.route("/")
+def index():
+    return "<a href='/login'>Login with Gmail</a>"
+
+@app.route("/login")
+def login():
+    session.clear()
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
+        scopes=SCOPES,
+        redirect_uri=REDIRECT_URI
+    )
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="false",
+        prompt="consent"
+    )
+    session["state"] = state
+    return redirect(auth_url)
+
+@app.route("/oauth2callback")
+def oauth2callback():
+    state = session.get("state")
+    if not state:
+        return "Session state missing. Please try logging in again.", 400
+
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
+        scopes=SCOPES,
+        state=state,
+        redirect_uri=REDIRECT_URI
+    )
+    try:
+        flow.fetch_token(authorization_response=request.url)
+    except Exception as e:
+        return f"<h3>OAuth failed: {str(e)}</h3>", 400
+
+    credentials = flow.credentials
+    session["credentials"] = {
+        "token": credentials.token,
+        "refresh_token": credentials.refresh_token,
+        "token_uri": credentials.token_uri,
+        "client_id": credentials.client_id,
+        "client_secret": credentials.client_secret,
+        "scopes": list(credentials.scopes),
     }
-    document.getElementById("loginBtn").style.display = "none";
+    return redirect("https://fe-gmail-login-kde3.vercel.app?logged_in=true")
 
-    const data = await res.json();
-    document.getElementById("subject").innerText = data.subject || "(No subject)";
-    document.getElementById("body").innerText = data.body || "(No body)";
-    document.getElementById("emailAudio").src = `data:audio/mpeg;base64,${data.audio_base64}`;
-    document.getElementById("content").style.display = "block";
-  } catch (err) {
-    console.error("Error loading email:", err);
-    alert("Something went wrong while fetching your email.");
-  }
-}
+@app.route("/latest_email")
+def latest_email():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
 
-let recognition;
-if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.lang = "en-US";
-  recognition.continuous = false;
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
 
-  recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript;
-    document.getElementById("transcript").innerText = "You said: " + transcript;
-    document.getElementById("transcript").dataset.reply = transcript;
-  };
+    results = service.users().messages().list(
+        userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
+    ).execute()
+    messages = results.get("messages", [])
+    if not messages:
+        return jsonify({"message": "No unread emails found."})
 
-  recognition.onerror = (event) => {
-    alert("Mic error: " + event.error);
-  };
-} else {
-  alert("Your browser does not support voice input (try Chrome).");
-}
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(
+        userId="me", id=msg_id, format="full"
+    ).execute()
 
-function startRecording() {
-  document.getElementById("transcript").innerText = "";
-  document.getElementById("transcript").dataset.reply = "";
-  if (recognition) recognition.start();
-}
+    # Extract subject
+    subject = next(
+        (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
+        "No Subject"
+    )
 
-function stopRecording() {
-  if (recognition) recognition.stop();
-}
+    # Extract plain-text body
+    payload = msg["payload"]
+    parts = payload.get("parts", [])
+    if parts:
+        body = ""
+        for part in parts:
+            if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
+                break
+        if not body:
+            body = msg.get("snippet", "")
+    else:
+        body = (
+            base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8")
+            if payload.get("body", {}).get("data")
+            else msg.get("snippet", "")
+        )
 
-async function sendReply() {
-  // Grab whatever you just spoke:
-  const userInstruction = document.getElementById("transcript").dataset.reply;
-  if (!userInstruction) {
-    return alert("Please speak a reply instruction first.");
-  }
+    text_to_read = f"Subject: {subject}. Body: {body}"
+    audio_base64 = ""
+    try:
+        eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
+        headers = {
+            "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
+            "Content-Type": "application/json",
+            "accept": "audio/mpeg",
+        }
+        payload_json = {
+            "text": text_to_read,
+            "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
+        }
+        response = requests.post(eleven_url, headers=headers, json=payload_json)
+        response.raise_for_status()
+        audio_base64 = base64.b64encode(response.content).decode("utf-8")
+    except Exception:
+        audio_base64 = ""
 
-  // Send it to /send_reply to get back the AI‐formatted email text
-  const res = await fetch(`${BASE_URL}/send_reply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ reply: userInstruction })
-  });
+    return jsonify({
+        "subject": subject,
+        "body": body,
+        "audio_base64": audio_base64
+    })
 
-  if (!res.ok) {
-    const err = await res.json();
-    return alert("Error: " + (err.error || JSON.stringify(err)));
-  }
+@app.route("/send_reply", methods=["POST"])
+def send_reply():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
 
-  const json = await res.json();
-  // Display the AI‐generated reply in a <pre id="aiReply"></pre>
-  document.getElementById("aiReply").innerText = json.formatted_reply;
-}
+    data = request.get_json()
+    user_instruction = data.get("reply", "").strip()
+    if not user_instruction:
+        return jsonify({"error": "No instruction provided"}), 400
 
-// On page load, hide or show appropriately
-window.onload = () => {
-  const urlParams = new URLSearchParams(window.location.search);
-  const isLoggedIn = urlParams.get("logged_in") === "true";
-  if (isLoggedIn) {
-    document.getElementById("loginBtn").style.display = "none";
-    loadEmail();
-  }
-};
+    # Fetch the latest unread email again
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    results = service.users().messages().list(
+        userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
+    ).execute()
+    messages = results.get("messages", [])
+    if not messages:
+        return jsonify({"message": "No email to reply to"}), 400
+
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(
+        userId="me", id=msg_id, format="full"
+    ).execute()
+
+    # Extract original subject
+    original_subject = next(
+        (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
+        "No Subject"
+    )
+
+    # Extract original body
+    payload = msg["payload"]
+    parts = payload.get("parts", [])
+    if parts:
+        original_body = ""
+        for part in parts:
+            if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                original_body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
+                break
+        if not original_body:
+            original_body = msg.get("snippet", "")
+    else:
+        original_body = (
+            base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8")
+            if payload.get("body", {}).get("data")
+            else msg.get("snippet", "")
+        )
+
+    # Build the prompt for OpenAI
+    prompt_text = f"""
+You are a courteous, professional email assistant.
+The original email had this subject: "{original_subject}"
+and this body:
+\"\"\"
+{original_body}
+\"\"\"
+
+The user’s instruction for their reply is: "{user_instruction}".
+
+Please draft a well-formatted email reply that:
+1) Responds appropriately to the original email.
+2) Uses the instruction given by the user above.
+3) Keeps the same subject line prefixed with “Re:”.
+4) Is polite and professional, ready to be sent as-is.
+"""
+
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful email assistant."},
+                {"role": "user", "content": prompt_text}
+            ],
+            max_tokens=500,
+        )
+        formatted_reply = completion.choices[0].message.content.strip()
+    except Exception as e:
+        return jsonify({"error": f"OpenAI call failed: {e}"}), 500
+
+    return jsonify({"formatted_reply": formatted_reply})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
