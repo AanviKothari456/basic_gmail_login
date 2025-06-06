@@ -116,6 +116,7 @@ def latest_email():
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
+    # If a specific msg_id is provided, use it; otherwise fetch the newest unread
     msg_id = request.args.get("msg_id")
     if not msg_id:
         results = service.users().messages().list(
@@ -130,33 +131,63 @@ def latest_email():
         userId="me", id=msg_id, format="full"
     ).execute()
 
+    # ─── Extract subject ──────────────────────────────────────────────────────
     subject = next(
         (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
         "No Subject"
     )
 
+    # ─── Extract body_html (try text/html first, then text/plain) ────────────
     payload = msg["payload"]
     parts = payload.get("parts", [])
-    if parts:
-        body = ""
-        for part in parts:
-            if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
-                break
-        if not body:
-            body = msg.get("snippet", "")
-    else:
-        body = (
-            base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8")
-            if payload.get("body", {}).get("data")
-            else msg.get("snippet", "")
-        )
 
+    body_html = ""
+    body_text = ""
+
+    if parts:
+        # 1) Look for a text/html part
+        for part in parts:
+            if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
+                raw_data = part["body"]["data"]
+                body_html = base64.urlsafe_b64decode(raw_data).decode("utf-8")
+                break
+        # 2) If no HTML, look for text/plain
+        if not body_html:
+            for part in parts:
+                if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                    raw_data = part["body"]["data"]
+                    body_text = base64.urlsafe_b64decode(raw_data).decode("utf-8")
+                    break
+        # 3) If neither part was found, use snippet
+        if not body_html and not body_text:
+            body_text = msg.get("snippet", "")
+    else:
+        # Single‐part message (no parts array)
+        single_mime = payload.get("mimeType", "")
+        single_data = payload.get("body", {}).get("data")
+        if single_mime == "text/html" and single_data:
+            body_html = base64.urlsafe_b64decode(single_data).decode("utf-8")
+        elif single_mime == "text/plain" and single_data:
+            body_text = base64.urlsafe_b64decode(single_data).decode("utf-8")
+        else:
+            body_text = msg.get("snippet", "")
+
+    # 4) If we only have plain‐text, escape HTML and convert newlines to <br>
+    if not body_html and body_text:
+        safe = (
+            body_text.replace("&", "&amp;")
+                     .replace("<", "&lt;")
+                     .replace(">", "&gt;")
+        )
+        body_html = safe.replace("\n", "<br>")
+
+    # ─── Generate summary (unchanged) ────────────────────────────────────────
     prompt_text = f"""
 Summarize the following email in exactly two lines, focusing on the key details:
 
 \"\"\"
-{body}
+{body_text if body_text else ''}
+{body_html if body_html else ''}
 \"\"\"
 """
     try:
@@ -172,9 +203,11 @@ Summarize the following email in exactly two lines, focusing on the key details:
     return jsonify({
         "msg_id": msg_id,
         "subject": subject,
-        "body": body,
+        "body_html": body_html,
+        "body_text": body_text,
         "summary": summary
     })
+
 
 
 @app.route("/send_reply", methods=["POST"])
@@ -233,10 +266,9 @@ and this body:
 The user’s instruction for their reply is: "{user_instruction}".
 
 Please draft a well-formatted email reply that:
-1) Responds appropriately to the original email.
-2) Uses the instruction given by the user above.
-3) Keeps the same subject line prefixed with “Re:”.
-4) Is polite and professional, ready to be sent as-is.
+1) Responds appropriately to the original email. you already know the sender's name so address them according to tone of email.
+2) Uses the instruction given by the user above. like if user ends with best aanvi, the regards at the end should be Best, next line, Aanvi...
+3) Is polite and professional, ready to be sent as-is. keep it short. 
 """
 
     try:
