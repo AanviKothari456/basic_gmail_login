@@ -238,5 +238,53 @@ Please draft a well-formatted email reply that:
 
     return jsonify({"formatted_reply": formatted_reply})
 
+
+# File: app.py (add this below your existing endpoints)
+
+from email.mime.text import MIMEText  # make sure this import is present
+
+@app.route("/send_email", methods=["POST"])
+def send_email():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
+
+    data = request.get_json()
+    final_reply = data.get("reply_text", "").strip()
+    if not final_reply:
+        return jsonify({"error": "No reply text provided"}), 400
+
+    # Re‐fetch the latest unread message to get thread & from-address
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    results = service.users().messages().list(
+        userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
+    ).execute()
+    messages = results.get("messages", [])
+    if not messages:
+        return jsonify({"message": "No email to reply to"}), 400
+
+    msg_id = messages[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id, format="metadata").execute()
+    thread_id = msg["threadId"]
+    sender = next((h["value"] for h in msg["payload"]["headers"] if h["name"] == "From"), "")
+
+    # Construct and send the MIME reply
+    mime_message = MIMEText(final_reply)
+    mime_message["To"] = sender
+    mime_message["Subject"] = "Re: " + next(
+        (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"), ""
+    )
+    raw = base64.urlsafe_b64encode(mime_message.as_bytes()).decode("utf-8")
+
+    try:
+        service.users().messages().send(
+            userId="me",
+            body={"raw": raw, "threadId": thread_id}
+        ).execute()
+        return jsonify({"status": "sent"})
+    except Exception as e:
+        return jsonify({"error": f"Gmail send failed: {str(e)}"}), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
