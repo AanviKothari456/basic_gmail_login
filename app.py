@@ -133,30 +133,28 @@ def latest_email():
             else msg.get("snippet", "")
         )
 
-    text_to_read = f"Subject: {subject}. Body: {body}"
-    audio_base64 = ""
+    # Generate a two-line summary using OpenAI
+    prompt_text = f"""
+Summarize the following email in exactly two lines, focusing on the key details:
+
+\"\"\"
+{body}
+\"\"\"
+"""
     try:
-        eleven_url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
-        headers = {
-            "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
-            "Content-Type": "application/json",
-            "accept": "audio/mpeg",
-        }
-        payload_json = {
-            "text": text_to_read,
-            "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
-        }
-        response = requests.post(eleven_url, headers=headers, json=payload_json)
-        response.raise_for_status()
-        audio_base64 = base64.b64encode(response.content).decode("utf-8")
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt_text}],
+            max_tokens=60
+        )
+        summary = response.choices[0].message.content.strip()
     except Exception as e:
-        print("⚠ ElevenLabs TTS error:", e)   # log the actual error
-        audio_base64 = ""
+        summary = "Error generating summary: " + str(e)
 
     return jsonify({
         "subject": subject,
         "body": body,
-        "audio_base64": audio_base64
+        "summary": summary
     })
 
 @app.route("/send_reply", methods=["POST"])
@@ -238,11 +236,6 @@ Please draft a well-formatted email reply that:
 
     return jsonify({"formatted_reply": formatted_reply})
 
-
-# File: app.py (add this below your existing endpoints)
-
-from email.mime.text import MIMEText  # make sure this import is present
-
 @app.route("/send_email", methods=["POST"])
 def send_email():
     if "credentials" not in session:
@@ -269,7 +262,6 @@ def send_email():
     thread_id = msg["threadId"]
     sender = next((h["value"] for h in msg["payload"]["headers"] if h["name"] == "From"), "")
 
-    # Construct and send the MIME reply
     mime_message = MIMEText(final_reply)
     mime_message["To"] = sender
     mime_message["Subject"] = "Re: " + next(
