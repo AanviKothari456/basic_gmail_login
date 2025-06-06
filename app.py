@@ -150,6 +150,7 @@ def latest_email():
         response.raise_for_status()
         audio_base64 = base64.b64encode(response.content).decode("utf-8")
     except Exception:
+        print("⚠ ElevenLabs TTS error:", e)   # log the actual error
         audio_base64 = ""
 
     return jsonify({
