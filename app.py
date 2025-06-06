@@ -10,16 +10,14 @@ from googleapiclient.discovery import build
 import google.oauth2.credentials
 from email.mime.text import MIMEText
 
-from openai import OpenAI           # <— use the new client
-from dotenv import load_dotenv
+from openai import OpenAI
 
-load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "REPLACE_WITH_RANDOM_SECRET")
 
-# ─── Session and CORS ──────────────────────────────────────
+# Session and CORS configuration
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_COOKIE_SAMESITE"] = "None"
 app.config["SESSION_COOKIE_SECURE"] = True
@@ -31,7 +29,7 @@ CORS(
     origins=["https://fe-gmail-login-kde3.vercel.app"]
 )
 
-# ─── Google OAuth Config ───────────────────────────────────
+# Google OAuth configuration
 CLIENT_SECRETS_FILE = "credentials.json"
 REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
 SCOPES = [
