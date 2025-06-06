@@ -2,7 +2,6 @@
 import os
 import base64
 import requests
-import openai
 from flask import Flask, redirect, request, session, jsonify
 from flask_cors import CORS
 from flask_session import Session
@@ -11,10 +10,16 @@ from googleapiclient.discovery import build
 import google.oauth2.credentials
 from email.mime.text import MIMEText
 
+from openai import OpenAI           # <— use the new client
+from dotenv import load_dotenv
+
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "REPLACE_WITH_RANDOM_SECRET")
 
-# Session and CORS configuration
+# ─── Session and CORS ──────────────────────────────────────
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_COOKIE_SAMESITE"] = "None"
 app.config["SESSION_COOKIE_SECURE"] = True
@@ -26,7 +31,7 @@ CORS(
     origins=["https://fe-gmail-login-kde3.vercel.app"]
 )
 
-# Google OAuth configuration
+# ─── Google OAuth Config ───────────────────────────────────
 CLIENT_SECRETS_FILE = "credentials.json"
 REDIRECT_URI = "https://basic-gmail-login.onrender.com/oauth2callback"
 SCOPES = [
@@ -37,9 +42,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
-# OpenAI configuration
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 @app.route("/")
 def index():
@@ -227,17 +229,13 @@ Please draft a well-formatted email reply that:
 """
 
     try:
-        completion = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful email assistant."},
-                {"role": "user", "content": prompt_text}
-            ],
-            max_tokens=500,
+            messages=[{"role": "user", "content": prompt_text}]
         )
-        formatted_reply = completion.choices[0].message.content.strip()
+        formatted_reply = response.choices[0].message.content.strip()
     except Exception as e:
-        return jsonify({"error": f"OpenAI call failed: {e}"}), 500
+        return jsonify({"error": str(e)}), 500
 
     return jsonify({"formatted_reply": formatted_reply})
 
