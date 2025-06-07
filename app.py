@@ -438,6 +438,8 @@ Please draft a well-formatted email reply that:
 1) Responds appropriately to the original email. you already know the sender's name so address them according to tone of email at the top.
 2) Uses the instruction given by the user above. You know user's name so end with best, user.. if you know. 
 3) Is polite and professional, ready to be sent as-is. keep it short. DO NOT INCLUDE SUBJECT AT ALL. only body of email. 
+4) DO NOT INCLUDE ANYTHING ELSE APART FRON THE EMAIL , no preamble, formatting hints, separators, or explanations—just the plain email content ready to send.
+
 """
 
     try:
