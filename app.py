@@ -650,11 +650,13 @@ def attachments_summary():
     full = "\n\n".join(texts)
 
     # 3) Summarize with OpenAI
-    prompt = (
-        "You are an expert assistant. Summarize the following email and its attachments in 2 sentneces or less, "
-        "covering key points from the body, any PDFs, and any images."
-        f"\n\nFull content:\n"""{full}""\n"
-    )
+    prompt = f"""You are an expert assistant. Summarize the following email and its attachments in 2 sentences or less, \
+    covering key points from the body, any PDFs, and any images.
+    
+    Full content:
+    {full}
+    """
+
     resp = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
