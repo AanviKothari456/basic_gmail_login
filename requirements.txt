@@ -13,3 +13,4 @@ html2text
 Pillow
 pytesseract
 python-dotenv
+PyPDF2
