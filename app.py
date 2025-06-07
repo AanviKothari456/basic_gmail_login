@@ -8,7 +8,11 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 import google.oauth2.credentials
 from email.mime.text import MIMEText
-
+from bs4 import BeautifulSoup
+import html2text
+import pytesseract
+from PIL import Image
+import io
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -39,6 +43,51 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+
+
+# at top of app.py
+def extract_email_text(msg, service):
+    """Pull text/plain, convert text/html, and OCR image attachments."""
+    import base64, io
+    from bs4 import BeautifulSoup
+    import html2text
+    import pytesseract
+    from PIL import Image
+
+    parts = msg["payload"].get("parts", [])
+    texts = []
+
+    # — Plain text —
+    for p in parts:
+        if p.get("mimeType") == "text/plain" and p.get("body",{}).get("data"):
+            texts.append(
+                base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+            )
+            break
+
+    # — HTML → text —
+    for p in parts:
+        if p.get("mimeType") == "text/html" and p.get("body",{}).get("data"):
+            raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+            texts.append(html2text.html2text(raw))
+            break
+
+    # — OCR image attachments —
+    for p in parts:
+        if p.get("filename") and p["body"].get("attachmentId"):
+            if p["mimeType"].startswith("image/"):
+                att = service.users().messages().attachments().get(
+                    userId="me",
+                    messageId=msg["id"],
+                    id=p["body"]["attachmentId"]
+                ).execute()
+                img_data = base64.urlsafe_b64decode(att["data"])
+                img = Image.open(io.BytesIO(img_data))
+                texts.append(pytesseract.image_to_string(img))
+
+    return "\n\n".join(texts)
+
 
 
 @app.route("/")
@@ -245,14 +294,14 @@ def latest_email():
                      .replace(">", "&gt;")
         )
         body_html = safe.replace("\n", "<br>")
-
+    # ADDED THIS FOR OCR PROCESSING
+    full_text = extract_email_text(msg, service)
     # ─── Generate summary (unchanged) ────────────────────────────────────────
     prompt_text = f"""
-Summarize the following email in exactly two lines, focusing on the key details:
+Summarize the following email in exactly two lines:
 
 \"\"\"
-{body_text if body_text else ''}
-{body_html if body_html else ''}
+{full_text}
 \"\"\"
 """
     try:
