@@ -564,6 +564,88 @@ maintains the original tone and formatting, and is ready to send.
 
     return jsonify({"revised_reply": revised})
 
+import io
+from PIL import Image
+import pytesseract
+from PyPDF2 import PdfReader
+
+def pdf_to_text(pdf_bytes: bytes) -> str:
+    """
+    Extract all text from a PDF file in memory.
+    Requires PyPDF2 (pip install PyPDF2).
+    """
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    text_chunks = []
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text_chunks.append(page_text)
+    return "\n\n".join(text_chunks) or "[No extractable text in PDF]"
+
+def image_to_text(img_bytes: bytes) -> str:
+    """
+    Run OCR on an image file in memory.
+    Requires Pillow and pytesseract (pip install Pillow pytesseract)
+    and the Tesseract binary installed on the host.
+    """
+    image = Image.open(io.BytesIO(img_bytes))
+    text = pytesseract.image_to_string(image)
+    return text.strip() or "[No text detected in image]"
+
+@app.route("/attachments_summary")
+def attachments_summary():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
+
+    msg_id = request.args.get("msg_id", "").strip()
+    if not msg_id:
+        return jsonify({"error": "No msg_id provided"}), 400
+
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    # 1) fetch the raw message
+    msg = service.users().messages().get(
+        userId="me", id=msg_id, format="full"
+    ).execute()
+
+    # 2) pull out any PDF/image attachments
+    texts = []
+    for part in msg["payload"].get("parts", []):
+        if part.get("filename") and part["body"].get("attachmentId"):
+            data = service.users().messages().attachments().get(
+                userId="me", messageId=msg_id,
+                id=part["body"]["attachmentId"]
+            ).execute()["data"]
+            raw = base64.urlsafe_b64decode(data)
+            ct = part.get("mimeType", "")
+            if ct == "application/pdf":
+                # your PDF‐to‐text extraction here...
+                texts.append(pdf_to_text(raw))
+            elif ct.startswith("image/"):
+                # your image OCR here...
+                texts.append(image_to_text(raw))
+
+    if not texts:
+        return jsonify({"attachment_summary": "No PDF or image attachments found."})
+
+    full = "\n\n".join(texts)
+
+    # 3) ask OpenAI to summarize the attachments
+    prompt = f"""
+You are an assistant that summarizes file attachments. Below is the extracted text from PDFs and OCR’d images.
+Produce a single concise paragraph describing what these attachments contain:
+
+\"\"\"{full}\"\"\"
+"""
+    resp = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=100
+    )
+    summary = resp.choices[0].message.content.strip()
+
+    return jsonify({"attachment_summary": summary})
 
 
 if __name__ == "__main__":
