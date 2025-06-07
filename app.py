@@ -91,42 +91,70 @@ def oauth2callback():
     }
     return redirect("https://fe-gmail-login-kde3.vercel.app?logged_in=true")
 
-# in app.py
+# trying assembly ai
 import os, requests
 from flask import Flask, request, jsonify
+
+import time
+
 
 ASSEMBLY_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    audio = request.files["audio"]  # assume front-end posts a WebM blob
-    # 1) upload
-    upload = requests.post(
-        "https://api.assemblyai.com/v2/upload",
-        headers={"authorization": ASSEMBLY_KEY},
-        data=audio.read()
-    )
-    upload_url = upload.text
-    # 2) kick off transcript
-    resp = requests.post(
-        "https://api.assemblyai.com/v2/transcript",
-        headers={
-          "authorization": ASSEMBLY_KEY,
-          "content-type": "application/json"
-        },
-        json={"audio_url": upload_url}
-    ).json()
-    tid = resp["id"]
-    # 3) poll until done
-    while True:
-        status = requests.get(
-            f"https://api.assemblyai.com/v2/transcript/{tid}",
-            headers={"authorization": ASSEMBLY_KEY}
-        ).json()
-        if status["status"] == "completed":
-            return jsonify({"text": status["text"]})
-        if status["status"] == "error":
-            return jsonify({"error": "transcription failed"}), 500
+    # 1) ensure we got a file
+    if "audio" not in request.files:
+        return jsonify({"error": "No audio file part"}), 400
+
+    audio_file = request.files["audio"]
+    data = audio_file.read()
+    if not data:
+        return jsonify({"error": "Empty audio file"}), 400
+
+    try:
+        # 2) upload
+        upload_resp = requests.post(
+            "https://api.assemblyai.com/v2/upload",
+            headers={"authorization": ASSEMBLY_KEY},
+            data=data
+        )
+        upload_resp.raise_for_status()
+        upload_url = upload_resp.text
+
+        # 3) kick off transcription
+        transcript_resp = requests.post(
+            "https://api.assemblyai.com/v2/transcript",
+            headers={
+                "authorization": ASSEMBLY_KEY,
+                "content-type": "application/json"
+            },
+            json={"audio_url": upload_url}
+        )
+        transcript_resp.raise_for_status()
+        transcript_id = transcript_resp.json().get("id")
+
+        # 4) poll until complete (or error)
+        while True:
+            status_resp = requests.get(
+                f"https://api.assemblyai.com/v2/transcript/{transcript_id}",
+                headers={"authorization": ASSEMBLY_KEY}
+            )
+            status_resp.raise_for_status()
+            status_json = status_resp.json()
+            if status_json["status"] == "completed":
+                return jsonify({"text": status_json["text"]})
+            if status_json["status"] == "error":
+                return jsonify({"error": status_json.get("error", "Unknown error")}), 500
+            time.sleep(1)
+
+    except requests.HTTPError as http_err:
+        # catch any HTTP errors from AssemblyAI
+        return jsonify({"error": f"AssemblyAI HTTP error: {http_err}"}), 502
+
+    except Exception as e:
+        # catch-all for anything else
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
 
 
 @app.route("/unread_ids")
