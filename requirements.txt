@@ -8,3 +8,8 @@ requests
 openai
 gunicorn
 gTTS
+beautifulsoup4
+html2text
+Pillow
+pytesseract
+python-dotenv
