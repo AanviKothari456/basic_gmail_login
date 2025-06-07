@@ -119,7 +119,7 @@ def transcribe():
             data=data
         )
         upload_resp.raise_for_status()
-        upload_url = upload_resp.text
+        upload_url = upload_resp.json()["upload_url"]
 
         # 3) kick off transcription
         transcript_resp = requests.post(
