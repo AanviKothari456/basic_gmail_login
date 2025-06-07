@@ -295,15 +295,36 @@ def latest_email():
         )
         body_html = safe.replace("\n", "<br>")
     # ADDED THIS FOR OCR PROCESSING
-    full_text = extract_email_text(msg, service)
-    # ─── Generate summary (unchanged) ────────────────────────────────────────
     prompt_text = f"""
-Summarize the following email in exactly two lines:
+    You are an expert email summarizer. Summarize the following email in exactly two concise sentences—no bullet points or numbering. 
+    Include the sender (or their role), the main action or request, and any critical details (dates, ticket numbers, or links). Do not be vague or generic.
+    
+    Example 1:
+    Email:
+    
+    Hi Aanvi,
+    Thanks for declining the TA/UCS2 appointment for CS10. I’ve noted it and will update the roster.
+    Best, Prof. Doe
+    
+    Summary:
+    Professor Doe acknowledged your decision to decline the CS10 TA/UCS2 appointment. He will update the course roster accordingly.
+    
+    Example 2:
+    Email:
+    Hello,
+    Your password reset link (https://…) will expire in 24 hours. Please use it before midnight April 30.
+    Regards, IT Support
+    
+    Summary: IT Support sent you a password reset link that expires in 24 hours. You must reset your password before midnight on April 30.
+    
+    Email:
+    \"\"\"
+    {full_text}
+    \"\"\"
 
-\"\"\"
-{full_text}
-\"\"\"
+Summary:
 """
+
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -415,9 +436,9 @@ and this body:
 The user’s instruction for their reply is: "{user_instruction}".
 
 Please draft a well-formatted email reply that:
-1) Responds appropriately to the original email. you already know the sender's name so address them according to tone of email.
-2) Uses the instruction given by the user above. like if user ends with best aanvi, the regards at the end should be Best, next line, Aanvi...
-3) Is polite and professional, ready to be sent as-is. keep it short. 
+1) Responds appropriately to the original email. you already know the sender's name so address them according to tone of email at the top.
+2) Uses the instruction given by the user above. You know user's name so end with best, user.. if you know. 
+3) Is polite and professional, ready to be sent as-is. keep it short. DO NOT INCLUDE SUBJECT AT ALL. only body of email. 
 """
 
     try:
