@@ -472,6 +472,77 @@ def send_email():
     except Exception as e:
         return jsonify({"error": f"Gmail send failed: {str(e)}"}), 500
 
+@app.route("/edit_reply", methods=["POST"])
+def edit_reply():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
+
+    data = request.get_json(force=True)
+    msg_id = data.get("msg_id", "").strip()
+    original_draft = data.get("original_draft", "").strip()
+    edit_instructions = data.get("edit_instructions", "").strip()
+    if not msg_id or not original_draft or not edit_instructions:
+        return jsonify({"error": "Missing parameters"}), 400
+
+    # rebuild Gmail service
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    # fetch the original email body (plain-text preferred)
+    try:
+        msg = service.users().messages().get(
+            userId="me", id=msg_id, format="full"
+        ).execute()
+    except Exception:
+        return jsonify({"error": "Could not fetch original message"}), 400
+
+    # extract the original body text
+    original_body = ""
+    parts = msg["payload"].get("parts", [])
+    for p in parts:
+        if p.get("mimeType") == "text/plain" and p["body"].get("data"):
+            original_body = base64.urlsafe_b64decode(
+                p["body"]["data"]
+            ).decode("utf-8")
+            break
+    if not original_body:
+        original_body = msg.get("snippet", "")
+
+    # build the edit prompt
+    prompt = f"""
+You are a courteous, professional email assistant.
+The original email said:
+\"\"\"
+{original_body}
+\"\"\"
+
+The assistant drafted this reply:
+\"\"\"
+{original_draft}
+\"\"\"
+
+The user has requested this edit:
+\"\"\"
+{edit_instructions}
+\"\"\"
+
+Please provide a revised reply that incorporates the user's instructions,
+maintains the original tone and formatting, and is ready to send.
+"""
+
+    # call OpenAI to get the revised draft
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        revised = resp.choices[0].message.content.strip()
+    except Exception as e:
+        return jsonify({"error": f"OpenAI error: {e}"}), 500
+
+    return jsonify({"revised_reply": revised})
+
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
