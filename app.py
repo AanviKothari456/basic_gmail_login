@@ -209,6 +209,41 @@ Summarize the following email in exactly two lines, focusing on the key details:
     })
 
 
+import requests
+from flask import Response, jsonify
+
+# configure these in your Render environment
+ELEVEN_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
+VOICE_ID       = os.getenv("ELEVEN_LABS_VOICE_ID")  # e.g. "EXAVITQu4vr4xnSDxMaL"
+
+@app.route("/tts", methods=["POST"])
+def tts():
+    payload = request.get_json(force=True)
+    text = payload.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+
+    eleven_resp = requests.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
+        headers={
+          "xi-api-key": ELEVEN_API_KEY,
+          "Content-Type": "application/json"
+        },
+        json={
+          "text": text,
+          "voice_settings": {"stability": 0.75, "similarity_boost": 0.75}
+        }
+    )
+
+    if eleven_resp.status_code != 200:
+        return jsonify({
+          "error": "ElevenLabs TTS failed",
+          "details": eleven_resp.text
+        }), 502
+
+    # stream back the MPEG audio
+    return Response(eleven_resp.content, mimetype="audio/mpeg")
+
 
 @app.route("/send_reply", methods=["POST"])
 def send_reply():
