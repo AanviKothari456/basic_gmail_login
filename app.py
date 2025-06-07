@@ -301,7 +301,7 @@ def latest_email():
         "You are an expert email summarizer. Summarize the following email in exactly two "
         "concise sentences—no bullet points or numbering. Include the sender (or their role), "
         "the main action or request, and any critical details (dates, ticket numbers, or links). "
-        "Do not be vague or generic.\n\n"
+        " JUST SAY NOTHING IF THE EMAIL BODY IS EMPTY OR INPUT IS EMPTY. DO NOT MAKE UP STUFF. \n\n"
         "Example 1:\n"
         "Email:\n"
         "Hi Aanvi,\n"
@@ -564,33 +564,34 @@ maintains the original tone and formatting, and is ready to send.
 
     return jsonify({"revised_reply": revised})
 
+
+
+
 import io
+import base64
+from flask import Flask, request, jsonify, session
+from googleapiclient.discovery import build
+import google.oauth2.credentials
+from PyPDF2 import PdfReader
 from PIL import Image
 import pytesseract
-from PyPDF2 import PdfReader
+
+# Helpers for pdf/image reading
 
 def pdf_to_text(pdf_bytes: bytes) -> str:
-    """
-    Extract all text from a PDF file in memory.
-    Requires PyPDF2 (pip install PyPDF2).
-    """
     reader = PdfReader(io.BytesIO(pdf_bytes))
-    text_chunks = []
+    chunks = []
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text_chunks.append(page_text)
-    return "\n\n".join(text_chunks) or "[No extractable text in PDF]"
+        text = page.extract_text()
+        if text:
+            chunks.append(text)
+    return "\n\n".join(chunks) or "[No extractable text in PDF]"
+
 
 def image_to_text(img_bytes: bytes) -> str:
-    """
-    Run OCR on an image file in memory.
-    Requires Pillow and pytesseract (pip install Pillow pytesseract)
-    and the Tesseract binary installed on the host.
-    """
-    image = Image.open(io.BytesIO(img_bytes))
-    text = pytesseract.image_to_string(image)
-    return text.strip() or "[No text detected in image]"
+    img = Image.open(io.BytesIO(img_bytes))
+    txt = pytesseract.image_to_string(img).strip()
+    return txt or "[No text detected in image]"
 
 @app.route("/attachments_summary")
 def attachments_summary():
@@ -604,14 +605,35 @@ def attachments_summary():
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    # 1) fetch the raw message
+    # Fetch the full message
     msg = service.users().messages().get(
         userId="me", id=msg_id, format="full"
     ).execute()
 
-    # 2) pull out any PDF/image attachments
-    texts = []
-    for part in msg["payload"].get("parts", []):
+    # 1) Extract the body text (plain or HTML fallback)
+    body_text = ""
+    payload = msg["payload"]
+    parts = payload.get("parts", [])
+    # look for text/plain first
+    for p in parts:
+        if p.get("mimeType") == "text/plain" and p["body"].get("data"):
+            body_text = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+            break
+    # if no plain, try HTML->text
+    if not body_text:
+        for p in parts:
+            if p.get("mimeType") == "text/html" and p["body"].get("data"):
+                raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+                # strip tags
+                from bs4 import BeautifulSoup
+                body_text = BeautifulSoup(raw, "html.parser").get_text("\n")
+                break
+    if not body_text:
+        body_text = msg.get("snippet", "")
+
+    # 2) Extract any attachments (PDF or images)
+    texts = [body_text]
+    for part in parts:
         if part.get("filename") and part["body"].get("attachmentId"):
             data = service.users().messages().attachments().get(
                 userId="me", messageId=msg_id,
@@ -620,33 +642,27 @@ def attachments_summary():
             raw = base64.urlsafe_b64decode(data)
             ct = part.get("mimeType", "")
             if ct == "application/pdf":
-                # your PDF‐to‐text extraction here...
                 texts.append(pdf_to_text(raw))
             elif ct.startswith("image/"):
-                # your image OCR here...
                 texts.append(image_to_text(raw))
 
-    if not texts:
-        return jsonify({"attachment_summary": "No PDF or image attachments found."})
-
+    # Combine body + attachments
     full = "\n\n".join(texts)
 
-    # 3) ask OpenAI to summarize the attachments
-    prompt = f"""
-You are an assistant that summarizes file attachments. Below is the extracted text from PDFs and OCR’d images.
-Produce a single concise paragraph describing what these attachments contain:
-
-\"\"\"{full}\"\"\"
-"""
+    # 3) Summarize with OpenAI
+    prompt = (
+        "You are an expert assistant. Summarize the following email and its attachments in 2 sentneces or less, "
+        "covering key points from the body, any PDFs, and any images."
+        f"\n\nFull content:\n"""{full}""\n"
+    )
     resp = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=100
+        max_tokens=120
     )
     summary = resp.choices[0].message.content.strip()
 
     return jsonify({"attachment_summary": summary})
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
