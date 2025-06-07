@@ -295,35 +295,34 @@ def latest_email():
         )
         body_html = safe.replace("\n", "<br>")
     # ADDED THIS FOR OCR PROCESSING
-    prompt_text = f"""
-    You are an expert email summarizer. Summarize the following email in exactly two concise sentences—no bullet points or numbering. 
-    Include the sender (or their role), the main action or request, and any critical details (dates, ticket numbers, or links). Do not be vague or generic.
-    
-    Example 1:
-    Email:
-    
-    Hi Aanvi,
-    Thanks for declining the TA/UCS2 appointment for CS10. I’ve noted it and will update the roster.
-    Best, Prof. Doe
-    
-    Summary:
-    Professor Doe acknowledged your decision to decline the CS10 TA/UCS2 appointment. He will update the course roster accordingly.
-    
-    Example 2:
-    Email:
-    Hello,
-    Your password reset link (https://…) will expire in 24 hours. Please use it before midnight April 30.
-    Regards, IT Support
-    
-    Summary: IT Support sent you a password reset link that expires in 24 hours. You must reset your password before midnight on April 30.
-    
-    Email:
-    \"\"\"
-    {full_text}
-    \"\"\"
+    full_text = extract_email_text(msg, service)
 
-Summary:
-"""
+    prompt_text = (
+        "You are an expert email summarizer. Summarize the following email in exactly two "
+        "concise sentences—no bullet points or numbering. Include the sender (or their role), "
+        "the main action or request, and any critical details (dates, ticket numbers, or links). "
+        "Do not be vague or generic.\n\n"
+        "Example 1:\n"
+        "Email:\n"
+        "Hi Aanvi,\n"
+        "Thanks for declining the TA/UCS2 appointment for CS10. I’ve noted it and will update the roster.\n"
+        "Best, Prof. Doe\n\n"
+        "Summary:\n"
+        "Professor Doe acknowledged your decision to decline the CS10 TA/UCS2 appointment. "
+        "He will update the course roster accordingly.\n\n"
+        "Example 2:\n"
+        "Email:\n"
+        "Hello,\n"
+        "Your password reset link (https://…) will expire in 24 hours. Please use it before midnight April 30.\n"
+        "Regards, IT Support\n\n"
+        "Summary:\n"
+        "IT Support sent you a password reset link that expires in 24 hours. "
+        "You must reset your password before midnight on April 30.\n\n"
+        "Now summarize this email:\n"
+        f"\"\"\"\n{full_text}\n\"\"\"\n\n"
+        "Summary:"
+    )
+
 
     try:
         response = client.chat.completions.create(
