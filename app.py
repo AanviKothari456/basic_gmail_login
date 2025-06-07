@@ -91,6 +91,43 @@ def oauth2callback():
     }
     return redirect("https://fe-gmail-login-kde3.vercel.app?logged_in=true")
 
+# in app.py
+import os, requests
+from flask import Flask, request, jsonify
+
+ASSEMBLY_KEY = os.getenv("ASSEMBLYAI_API_KEY")
+
+@app.route("/transcribe", methods=["POST"])
+def transcribe():
+    audio = request.files["audio"]  # assume front-end posts a WebM blob
+    # 1) upload
+    upload = requests.post(
+        "https://api.assemblyai.com/v2/upload",
+        headers={"authorization": ASSEMBLY_KEY},
+        data=audio.read()
+    )
+    upload_url = upload.text
+    # 2) kick off transcript
+    resp = requests.post(
+        "https://api.assemblyai.com/v2/transcript",
+        headers={
+          "authorization": ASSEMBLY_KEY,
+          "content-type": "application/json"
+        },
+        json={"audio_url": upload_url}
+    ).json()
+    tid = resp["id"]
+    # 3) poll until done
+    while True:
+        status = requests.get(
+            f"https://api.assemblyai.com/v2/transcript/{tid}",
+            headers={"authorization": ASSEMBLY_KEY}
+        ).json()
+        if status["status"] == "completed":
+            return jsonify({"text": status["text"]})
+        if status["status"] == "error":
+            return jsonify({"error": "transcription failed"}), 500
+
 
 @app.route("/unread_ids")
 def unread_ids():
