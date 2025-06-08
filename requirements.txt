@@ -14,7 +14,4 @@ Pillow
 pytesseract
 python-dotenv
 PyPDF2
-easyocr
-torch
-torchvision
-opencv-python
+
