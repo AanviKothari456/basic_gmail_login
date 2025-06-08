@@ -1,5 +1,7 @@
 # File: app.py
 import os
+import io
+
 import base64
 from flask import Flask, redirect, request, session, jsonify
 from flask_cors import CORS
