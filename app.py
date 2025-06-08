@@ -54,8 +54,7 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 
 
-# initialize EasyOCR once
-reader = easyocr.Reader(['en'], gpu=False)
+
 
 
 
@@ -554,7 +553,7 @@ def pdf_to_text(pdf_bytes: bytes) -> str:
     full = "\n\n".join(chunks).strip()
     return full or "[No extractable text in PDF]"
 
-def extract_email_text(msg) -> str:
+def extract_email_text(msg, service) -> str:
     """
     Pull text/plain, convert text/html to markdown, and extract all PDFs.
     Returns the concatenated text.
@@ -573,7 +572,6 @@ def extract_email_text(msg) -> str:
         for p in msg["payload"].get("parts", []):
             if p.get("mimeType") == "text/html" and p.get("body", {}).get("data"):
                 raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-                # convert HTML → plain text
                 md = html2text.html2text(raw)
                 texts.append(md)
                 break
