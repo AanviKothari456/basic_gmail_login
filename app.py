@@ -12,7 +12,7 @@ import google.oauth2.credentials
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 import html2text
-
+import requests
 from openai import OpenAI
 
 import html2text
@@ -111,10 +111,20 @@ def oauth2callback():
         "client_secret": credentials.client_secret,
         "scopes": list(credentials.scopes),
     }
+
+    
+
+    userinfo = requests.get(
+        "https://www.googleapis.com/oauth2/v1/userinfo",
+        params={"access_token": credentials.token}
+    ).json()
+    session["user_name"] = userinfo.get("given_name") or userinfo.get("name")
+
+    
     return redirect("https://fe-gmail-login-kde3.vercel.app?logged_in=true")
 
 # trying assembly ai
-import os, requests
+
 from flask import Flask, request, jsonify
 
 import time
@@ -361,10 +371,13 @@ def tts():
     return Response(eleven_resp.content, mimetype="audio/mpeg")
 
 
+
 @app.route("/send_reply", methods=["POST"])
 def send_reply():
     if "credentials" not in session:
         return jsonify({"error": "Not logged in"}), 401
+
+    user_name = session.get("user_name", "there")
 
     data = request.get_json()
     user_instruction = data.get("reply", "").strip()
@@ -407,7 +420,7 @@ def send_reply():
         )
 
     prompt_text = f"""
-You are a courteous, professional email assistant.
+You are a courteous, professional email assistant. You are drafting an email from **{user_name}** back to the original sender.
 The original email had this subject: "{original_subject}"
 and this body:
 \"\"\"
@@ -415,12 +428,13 @@ and this body:
 \"\"\"
 
 The user’s instruction for their reply is: "{user_instruction}". You have to draft this into a proper email. 
-
+Address the instruction above as {user_name} would. 
 Please draft a well-formatted email reply that is from the user pov:
 1) Responds appropriately to the original email. you already know the sender's name so address them according to tone of email at the top.
-2) Uses the instruction given by the user above to draft the proper email. You know user's name so end with Best, user.. if you know. 
+2) Uses the instruction given by the user above to draft the proper email. 
 3) Is polite and professional, ready to be sent as-is. keep it short. DO NOT INCLUDE SUBJECT AT ALL. only body of email. 
 4) DO NOT INCLUDE ANYTHING ELSE APART FROM THE EMAIL you drafted , no preamble, formatting hints, separators, or explanations—just the plain email content ready to send.
+5) Sign off with Best, {user_name}
 
 """
 
