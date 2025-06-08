@@ -10,14 +10,17 @@ import google.oauth2.credentials
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 import html2text
-import pytesseract
-from PIL import Image
+
 from openai import OpenAI
-import numpy as np
-from PIL import Image
+
 import html2text
-from bs4 import BeautifulSoup
-import easyocr
+
+from googleapiclient.discovery import build
+import google.oauth2.credentials
+from PyPDF2 import PdfReader  # or pdfplumber if you prefer
+
+import html2text
+import openai
 
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -54,50 +57,7 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 # initialize EasyOCR once
 reader = easyocr.Reader(['en'], gpu=False)
 
-def image_to_text(img_bytes: bytes) -> str:
-    """
-    Run OCR on raw image bytes using EasyOCR and return the extracted text.
-    """
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    arr = np.array(img)
-    lines = reader.readtext(arr, detail=0)
-    return "\n".join(lines) or "[No text detected]"
 
-def extract_email_text(msg, service) -> str:
-    """
-    Pull text/plain, convert text/html to markdown, and OCR image attachments.
-    Returns the concatenated text.
-    """
-    texts = []
-
-    # — Plain text part —
-    for p in msg["payload"].get("parts", []):
-        if p.get("mimeType") == "text/plain" and p.get("body", {}).get("data"):
-            txt = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-            texts.append(txt)
-            break
-
-    # — HTML part →
-    for p in msg["payload"].get("parts", []):
-        if p.get("mimeType") == "text/html" and p.get("body", {}).get("data"):
-            raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-            md = html2text.html2text(raw)
-            texts.append(md)
-            break
-
-    # — OCR on image attachments —
-    for p in msg["payload"].get("parts", []):
-        if p.get("filename") and p["body"].get("attachmentId"):
-            if p["mimeType"].startswith("image/"):
-                att = service.users().messages().attachments().get(
-                    userId="me",
-                    messageId=msg["id"],
-                    id=p["body"]["attachmentId"]
-                ).execute()
-                img_data = base64.urlsafe_b64decode(att["data"])
-                texts.append(image_to_text(img_data))
-
-    return "\n\n".join(texts)
 
 
 
@@ -579,31 +539,62 @@ maintains the original tone and formatting, and is ready to send.
 
 
 
-import io
-import base64
-from flask import Flask, request, jsonify, session
-from googleapiclient.discovery import build
-import google.oauth2.credentials
-from PyPDF2 import PdfReader
-from PIL import Image
-import pytesseract
 
-# Helpers for pdf/image reading
+
 
 def pdf_to_text(pdf_bytes: bytes) -> str:
+    """
+    Extract embedded text from PDF bytes.
+    """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     chunks = []
     for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            chunks.append(text)
-    return "\n\n".join(chunks) or "[No extractable text in PDF]"
+        text = page.extract_text() or ""
+        chunks.append(text)
+    full = "\n\n".join(chunks).strip()
+    return full or "[No extractable text in PDF]"
 
+def extract_email_text(msg) -> str:
+    """
+    Pull text/plain, convert text/html to markdown, and extract all PDFs.
+    Returns the concatenated text.
+    """
+    texts = []
 
-def image_to_text(img_bytes: bytes) -> str:
-    img = Image.open(io.BytesIO(img_bytes))
-    txt = pytesseract.image_to_string(img).strip()
-    return txt or "[No text detected in image]"
+    # — 1) Plain text part (first one only) —
+    for p in msg["payload"].get("parts", []):
+        if p.get("mimeType") == "text/plain" and p.get("body", {}).get("data"):
+            txt = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+            texts.append(txt)
+            break
+
+    # — 2) HTML part fallback (first one only) —
+    if not texts:
+        for p in msg["payload"].get("parts", []):
+            if p.get("mimeType") == "text/html" and p.get("body", {}).get("data"):
+                raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+                # convert HTML → plain text
+                md = html2text.html2text(raw)
+                texts.append(md)
+                break
+
+    # — 3) PDF attachments (all of them) —
+    for p in msg["payload"].get("parts", []):
+        if p.get("filename") and p["body"].get("attachmentId"):
+            if p.get("mimeType") == "application/pdf":
+                att = service.users().messages().attachments().get(
+                    userId="me",
+                    messageId=msg["id"],
+                    id=p["body"]["attachmentId"]
+                ).execute()
+                pdf_bytes = base64.urlsafe_b64decode(att["data"])
+                texts.append(pdf_to_text(pdf_bytes))
+
+    # Fallback to snippet if nothing found
+    if not texts and msg.get("snippet"):
+        texts.append(msg["snippet"])
+
+    return "\n\n".join(texts)
 
 @app.route("/attachments_summary")
 def attachments_summary():
@@ -617,59 +608,21 @@ def attachments_summary():
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    # Fetch the full message
+    # 1) Fetch the full message
     msg = service.users().messages().get(
         userId="me", id=msg_id, format="full"
     ).execute()
 
-    # 1) Extract the body text (plain or HTML fallback)
-    body_text = ""
-    payload = msg["payload"]
-    parts = payload.get("parts", [])
-    # look for text/plain first
-    for p in parts:
-        if p.get("mimeType") == "text/plain" and p["body"].get("data"):
-            body_text = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-            break
-    # if no plain, try HTML->text
-    if not body_text:
-        for p in parts:
-            if p.get("mimeType") == "text/html" and p["body"].get("data"):
-                raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-                # strip tags
-                from bs4 import BeautifulSoup
-                body_text = BeautifulSoup(raw, "html.parser").get_text("\n")
-                break
-    if not body_text:
-        body_text = msg.get("snippet", "")
-
-    # 2) Extract any attachments (PDF or images)
-    texts = [body_text]
-    for part in parts:
-        if part.get("filename") and part["body"].get("attachmentId"):
-            data = service.users().messages().attachments().get(
-                userId="me", messageId=msg_id,
-                id=part["body"]["attachmentId"]
-            ).execute()["data"]
-            raw = base64.urlsafe_b64decode(data)
-            ct = part.get("mimeType", "")
-            if ct == "application/pdf":
-                texts.append(pdf_to_text(raw))
-            elif ct.startswith("image/"):
-                texts.append(image_to_text(raw))
-
-    # Combine body + attachments
-    full = "\n\n".join(texts)
+    # 2) Extract all text (body + PDFs)
+    full = extract_email_text(msg)
 
     # 3) Summarize with OpenAI
-    prompt = f"""You are an expert assistant. Summarize the following email and its attachments in 2 sentences or less, \
-    covering key points from the body, any PDFs, and any images.
-    
-    Full content:
-    {full}
-    """
-
-    resp = client.chat.completions.create(
+    prompt = (
+        "You are an expert assistant. Summarize the following email and its PDF attachments "
+        "in two concise sentences, covering key points and any critical details.\n\n"
+        f"Full content:\n{full}"
+    )
+    resp = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=120
@@ -677,6 +630,8 @@ def attachments_summary():
     summary = resp.choices[0].message.content.strip()
 
     return jsonify({"attachment_summary": summary})
+
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
