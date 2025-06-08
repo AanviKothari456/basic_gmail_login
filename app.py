@@ -265,34 +265,43 @@ def latest_email():
                      .replace(">", "&gt;")
         )
         body_html = safe.replace("\n", "<br>")
-    # ADDED THIS FOR OCR PROCESSING
-    full_text = extract_email_text(msg, service)
+ 
+    full_text = extract_email_text(msg, service) #pdf processing + html processing
 
-    prompt_text = (
-        "You are an expert email summarizer. Summarize the following email in exactly two "
-        "concise sentences—no bullet points or numbering. Include the sender (or their role), "
-        "the main action or request, and any critical details (dates, ticket numbers, or links). "
-        " JUST SAY NOTHING IF THE EMAIL BODY IS EMPTY OR INPUT IS EMPTY. DO NOT MAKE UP STUFF. \n\n"
-        "Example 1:\n"
-        "Email:\n"
-        "Hi Aanvi,\n"
-        "Thanks for declining the TA/UCS2 appointment for CS10. I’ve noted it and will update the roster.\n"
-        "Best, Prof. Doe\n\n"
-        "Summary:\n"
-        "Professor Doe acknowledged your decision to decline the CS10 TA/UCS2 appointment. "
-        "He will update the course roster accordingly.\n\n"
-        "Example 2:\n"
-        "Email:\n"
-        "Hello,\n"
-        "Your password reset link (https://…) will expire in 24 hours. Please use it before midnight April 30.\n"
-        "Regards, IT Support\n\n"
-        "Summary:\n"
-        "IT Support sent you a password reset link that expires in 24 hours. "
-        "You must reset your password before midnight on April 30.\n\n"
-        "Now summarize this email:\n"
-        f"\"\"\"\n{full_text}\n\"\"\"\n\n"
-        "Summary:"
-    )
+    # right after you compute `full_text` and `subject`:
+    parts = msg["payload"].get("parts", [])
+    has_pdf   = any(p.get("mimeType") == "application/pdf"       for p in parts)
+    has_image = any(p.get("mimeType", "").startswith("image/")   for p in parts)
+    
+    if has_image and not has_pdf and not full_text.strip():
+        # Only images, no readable text
+        prompt_text = (
+            "You are an expert email summarizer. This email contains only image attachments which you cannot read; "
+            f"infer the content solely from the subject line: “{subject}”. "
+            "Summarize in exactly two concise sentences—no bullet points or numbering. "
+            "Do not invent any details.\n\n"
+            f"Subject: {subject}\n\nSummary:"
+        )
+
+    elif has_pdf:
+        # One or more PDFs present
+        prompt_text = (
+            "You are an expert email summarizer. Summarize the following email body and PDF attachment(s) "
+            "in exactly two concise sentences—no bullet points or numbering. "
+            "Include the main action or request, any critical dates or links.\n\n"
+            f"Email + PDF content:\n\"\"\"\n{full_text}\n\"\"\"\n\nSummary:"
+        )
+    
+    else:
+        # Normal case (text only or HTML/plain fallback)
+        prompt_text = (
+            "You are an expert email summarizer. Summarize the following email in exactly two "
+            "concise sentences—no bullet points or numbering. Include the sender (or their role), "
+            "the main action or request, and any critical details. DO NOT INCLUDE RE: SUBJECT LINE. Just give the email rpely so user can directly send it. "
+            "If the email body is empty, try to infer from the subject line. Do not make up details. \n\n"
+            f"Email content:\n\"\"\"\n{full_text}\n\"\"\"\n\n"
+            f"Subject: {subject}\n\nSummary:"
+        )
 
 
     try:
