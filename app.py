@@ -12,8 +12,13 @@ from bs4 import BeautifulSoup
 import html2text
 import pytesseract
 from PIL import Image
-import io
 from openai import OpenAI
+import numpy as np
+from PIL import Image
+import html2text
+from bs4 import BeautifulSoup
+import easyocr
+
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -46,35 +51,42 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 
 
-# at top of app.py
-def extract_email_text(msg, service):
-    """Pull text/plain, convert text/html, and OCR image attachments."""
-    import base64, io
-    from bs4 import BeautifulSoup
-    import html2text
-    import pytesseract
-    from PIL import Image
+# initialize EasyOCR once
+reader = easyocr.Reader(['en'], gpu=False)
 
-    parts = msg["payload"].get("parts", [])
+def image_to_text(img_bytes: bytes) -> str:
+    """
+    Run OCR on raw image bytes using EasyOCR and return the extracted text.
+    """
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    arr = np.array(img)
+    lines = reader.readtext(arr, detail=0)
+    return "\n".join(lines) or "[No text detected]"
+
+def extract_email_text(msg, service) -> str:
+    """
+    Pull text/plain, convert text/html to markdown, and OCR image attachments.
+    Returns the concatenated text.
+    """
     texts = []
 
-    # — Plain text —
-    for p in parts:
-        if p.get("mimeType") == "text/plain" and p.get("body",{}).get("data"):
-            texts.append(
-                base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-            )
+    # — Plain text part —
+    for p in msg["payload"].get("parts", []):
+        if p.get("mimeType") == "text/plain" and p.get("body", {}).get("data"):
+            txt = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
+            texts.append(txt)
             break
 
-    # — HTML → text —
-    for p in parts:
-        if p.get("mimeType") == "text/html" and p.get("body",{}).get("data"):
+    # — HTML part →
+    for p in msg["payload"].get("parts", []):
+        if p.get("mimeType") == "text/html" and p.get("body", {}).get("data"):
             raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-            texts.append(html2text.html2text(raw))
+            md = html2text.html2text(raw)
+            texts.append(md)
             break
 
-    # — OCR image attachments —
-    for p in parts:
+    # — OCR on image attachments —
+    for p in msg["payload"].get("parts", []):
         if p.get("filename") and p["body"].get("attachmentId"):
             if p["mimeType"].startswith("image/"):
                 att = service.users().messages().attachments().get(
@@ -83,10 +95,10 @@ def extract_email_text(msg, service):
                     id=p["body"]["attachmentId"]
                 ).execute()
                 img_data = base64.urlsafe_b64decode(att["data"])
-                img = Image.open(io.BytesIO(img_data))
-                texts.append(pytesseract.image_to_string(img))
+                texts.append(image_to_text(img_data))
 
     return "\n\n".join(texts)
+
 
 
 
