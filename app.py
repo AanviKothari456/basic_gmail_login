@@ -279,9 +279,9 @@ def latest_email():
         # Only images, no readable text
         prompt_text = (
             "You are an expert email summarizer. This email contains only image attachments which you cannot read; "
-            f"infer the content solely from the subject line: “{subject}”. "
-            "Summarize in exactly two concise sentences—no bullet points or numbering. "
-            "Do not invent any details.\n\n"
+            f"infer the content solely from the subject line: “{subject}”."
+            "Summarize in exactly two concise sentences otherwise. if no subject say you are unable to infer anything. "
+            "Do not invent any details, or say what you think the email is likely about. JUST  do not.\n\n"
             f"Subject: {subject}\n\nSummary:"
         )
 
@@ -299,7 +299,7 @@ def latest_email():
         prompt_text = (
             "You are an expert email summarizer. Summarize the following email in exactly two "
             "concise sentences—no bullet points or numbering. Include the sender (or their role), "
-            "the main action or request, and any critical details. DO NOT INCLUDE RE: SUBJECT LINE. Just give the email rpely so user can directly send it. "
+            "the main action or request, and any critical details. DO NOT INCLUDE RE: SUBJECT LINE. "
             "If the email body is empty, try to infer from the subject line. Do not make up details. \n\n"
             f"Email content:\n\"\"\"\n{full_text}\n\"\"\"\n\n"
             f"Subject: {subject}\n\nSummary:"
@@ -414,13 +414,13 @@ and this body:
 {original_body}
 \"\"\"
 
-The user’s instruction for their reply is: "{user_instruction}".
+The user’s instruction for their reply is: "{user_instruction}". You have to draft this into a proper email. 
 
-Please draft a well-formatted email reply that:
+Please draft a well-formatted email reply that is from the user pov:
 1) Responds appropriately to the original email. you already know the sender's name so address them according to tone of email at the top.
-2) Uses the instruction given by the user above. You know user's name so end with best, user.. if you know. 
+2) Uses the instruction given by the user above to draft the proper email. You know user's name so end with Best, user.. if you know. 
 3) Is polite and professional, ready to be sent as-is. keep it short. DO NOT INCLUDE SUBJECT AT ALL. only body of email. 
-4) DO NOT INCLUDE ANYTHING ELSE APART FRON THE EMAIL , no preamble, formatting hints, separators, or explanations—just the plain email content ready to send.
+4) DO NOT INCLUDE ANYTHING ELSE APART FROM THE EMAIL you drafted , no preamble, formatting hints, separators, or explanations—just the plain email content ready to send.
 
 """
 
