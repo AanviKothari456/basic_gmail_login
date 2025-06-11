@@ -654,6 +654,74 @@ def attachments_summary():
 
     return jsonify({"attachment_summary": summary})
 
+@app.route("/unread_threads_summary")
+def unread_threads_summary():
+    if "credentials" not in session:
+        return jsonify({"error": "Not logged in"}), 401
+
+    USE_THREAD_SUMMARY = os.getenv("USE_THREAD_SUMMARY", "true").lower() == "true"
+
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    # Step 1: Fetch all unread message IDs
+    results = service.users().messages().list(
+        userId="me", labelIds=["INBOX", "UNREAD"]
+    ).execute()
+    unread_msgs = results.get("messages", [])
+    if not unread_msgs:
+        return jsonify({"message": "No unread emails found."})
+
+    # Step 2: Group unread messages by threadId
+    thread_map = {}
+    for msg in unread_msgs:
+        msg_detail = service.users().messages().get(userId="me", id=msg["id"], format="metadata").execute()
+        thread_id = msg_detail.get("threadId")
+        thread_map.setdefault(thread_id, []).append(msg["id"])
+
+    summaries = []
+    for thread_id, unread_ids in thread_map.items():
+        thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        unread_msgs_in_thread = [m for m in thread["messages"] if m["id"] in unread_ids]
+
+        # Skip if none (safety)
+        if not unread_msgs_in_thread:
+            continue
+
+        # Extract text from unread messages only
+        texts = []
+        for msg in unread_msgs_in_thread:
+            text = extract_email_text(msg, service)
+            texts.append(text)
+
+        combined_text = "\n\n".join(texts).strip()
+        if not combined_text:
+            continue
+
+        prompt = (
+            "You are an expert assistant. Summarize the following unread emails "
+            "in this Gmail thread in exactly two concise sentences. Highlight the key points, requests, or next steps. "
+            "Do not include the subject or headers. Only summarize what’s actually written.\n\n"
+            f"Unread messages:\n\"\"\"\n{combined_text}\n\"\"\""
+        )
+
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=120
+            )
+            summary = response.choices[0].message.content.strip()
+        except Exception as e:
+            summary = f"Error generating summary: {e}"
+
+        summaries.append({
+            "thread_id": thread_id,
+            "unread_msg_ids": unread_ids,
+            "summary": summary
+        })
+
+    return jsonify({"threads": summaries})
 
 
 if __name__ == "__main__":
