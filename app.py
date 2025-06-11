@@ -296,7 +296,7 @@ def latest_email():
             )
             body_html = safe.replace("\n", "<br>")
 
-        full_text = extract_email_text(msg, service)
+        full_text =, service)
         has_pdf = any(p.get("mimeType") == "application/pdf" for p in parts)
         has_image = any(p.get("mimeType", "").startswith("image/") for p in parts)
 
@@ -591,7 +591,7 @@ def pdf_to_text(pdf_bytes: bytes) -> str:
     full = "\n\n".join(chunks).strip()
     return full or "[No extractable text in PDF]"
 
-def extract_email_text(msg, service) -> str:
+def, service) -> str:
     """
     Extracts readable content from a Gmail message object:
     1. Plaintext or HTML body (converted to markdown)
@@ -669,7 +669,8 @@ def attachments_summary():
     ).execute()
 
     # 2) Extract all text (body + PDFs)
-    full = extract_email_text(msg)
+    full = extract_email_text(msg, service)
+
 
     # 3) Summarize with OpenAI
     prompt = (
