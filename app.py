@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 import html2text
 import requests
 from openai import OpenAI
-full_text = extract_email_text(msg, service)
+
 import html2text
 
 from googleapiclient.discovery import build
