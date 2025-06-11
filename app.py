@@ -213,8 +213,9 @@ def latest_email():
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
 
-    # If a specific msg_id is provided, use it; otherwise fetch the newest unread
     msg_id = request.args.get("msg_id")
+    only_unread = request.args.get("only_unread", "false").lower() == "true"
+
     if not msg_id:
         results = service.users().messages().list(
             userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
@@ -224,88 +225,100 @@ def latest_email():
             return jsonify({"message": "No unread emails found."})
         msg_id = messages[0]["id"]
 
-    msg = service.users().messages().get(
-        userId="me", id=msg_id, format="full"
-    ).execute()
+    if only_unread:
+        msg_metadata = service.users().messages().get(userId="me", id=msg_id, format="metadata").execute()
+        thread_id = msg_metadata["threadId"]
 
-    # ─── Extract subject ──────────────────────────────────────────────────────
-    subject = next(
-        (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
-        "No Subject"
-    )
+        thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        unread_msgs = [m for m in thread["messages"] if "UNREAD" in m.get("labelIds", [])]
 
-    # ─── Extract body_html (try text/html first, then text/plain) ────────────
-    payload = msg["payload"]
-    parts = payload.get("parts", [])
+        if not unread_msgs:
+            return jsonify({"message": "No unread messages in thread."})
 
-    body_html = ""
-    body_text = ""
+        combined_text = ""
+        combined_subjects = []
 
-    if parts:
-        # 1) Look for a text/html part
-        for part in parts:
-            if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
-                raw_data = part["body"]["data"]
-                body_html = base64.urlsafe_b64decode(raw_data).decode("utf-8")
-                break
-        # 2) If no HTML, look for text/plain
-        if not body_html:
-            for part in parts:
-                if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-                    raw_data = part["body"]["data"]
-                    body_text = base64.urlsafe_b64decode(raw_data).decode("utf-8")
-                    break
-        # 3) If neither part was found, use snippet
-        if not body_html and not body_text:
-            body_text = msg.get("snippet", "")
+        for m in unread_msgs:
+            combined_text += extract_email_text(m, service) + "\n\n"
+            subject = next((h["value"] for h in m["payload"]["headers"] if h["name"] == "Subject"), "")
+            if subject: combined_subjects.append(subject)
+
+        subject = combined_subjects[-1] if combined_subjects else "No Subject"
+        full_text = combined_text.strip()
+        body_html = "<br>".join(full_text.splitlines())
+        body_text = full_text
+
+        has_pdf = any(p.get("mimeType") == "application/pdf" for m in unread_msgs for p in m["payload"].get("parts", []))
+        has_image = any(p.get("mimeType", "").startswith("image/") for m in unread_msgs for p in m["payload"].get("parts", []))
     else:
-        # Single‐part message (no parts array)
-        single_mime = payload.get("mimeType", "")
-        single_data = payload.get("body", {}).get("data")
-        if single_mime == "text/html" and single_data:
-            body_html = base64.urlsafe_b64decode(single_data).decode("utf-8")
-        elif single_mime == "text/plain" and single_data:
-            body_text = base64.urlsafe_b64decode(single_data).decode("utf-8")
-        else:
-            body_text = msg.get("snippet", "")
+        msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
 
-    # 4) If we only have plain‐text, escape HTML and convert newlines to <br>
-    if not body_html and body_text:
-        safe = (
-            body_text.replace("&", "&amp;")
-                     .replace("<", "&lt;")
-                     .replace(">", "&gt;")
+        subject = next(
+            (h["value"] for h in msg["payload"]["headers"] if h["name"] == "Subject"),
+            "No Subject"
         )
-        body_html = safe.replace("\n", "<br>")
- 
-    full_text = extract_email_text(msg, service) #pdf processing + html processing
 
-    # right after you compute `full_text` and `subject`:
-    parts = msg["payload"].get("parts", [])
-    has_pdf   = any(p.get("mimeType") == "application/pdf"       for p in parts)
-    has_image = any(p.get("mimeType", "").startswith("image/")   for p in parts)
-    
+        payload = msg["payload"]
+        parts = payload.get("parts", [])
+
+        body_html = ""
+        body_text = ""
+
+        if parts:
+            for part in parts:
+                if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
+                    raw_data = part["body"]["data"]
+                    body_html = base64.urlsafe_b64decode(raw_data).decode("utf-8")
+                    break
+            if not body_html:
+                for part in parts:
+                    if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                        raw_data = part["body"]["data"]
+                        body_text = base64.urlsafe_b64decode(raw_data).decode("utf-8")
+                        break
+            if not body_html and not body_text:
+                body_text = msg.get("snippet", "")
+        else:
+            single_mime = payload.get("mimeType", "")
+            single_data = payload.get("body", {}).get("data")
+            if single_mime == "text/html" and single_data:
+                body_html = base64.urlsafe_b64decode(single_data).decode("utf-8")
+            elif single_mime == "text/plain" and single_data:
+                body_text = base64.urlsafe_b64decode(single_data).decode("utf-8")
+            else:
+                body_text = msg.get("snippet", "")
+
+        if not body_html and body_text:
+            safe = (
+                body_text.replace("&", "&amp;")
+                         .replace("<", "&lt;")
+                         .replace(">", "&gt;")
+            )
+            body_html = safe.replace("\n", "<br>")
+
+        full_text = extract_email_text(msg, service)
+        has_pdf = any(p.get("mimeType") == "application/pdf" for p in parts)
+        has_image = any(p.get("mimeType", "").startswith("image/") for p in parts)
+
+    # ─── Summarization Prompt Logic ──────────────────────────────────────────
     if has_image and not has_pdf and not full_text.strip():
-        # Only images, no readable text
         prompt_text = (
             "You are an expert email summarizer. This email contains only image attachments which you cannot read; "
             f"infer the content solely from the subject line: “{subject}”."
-            "Summarize in exactly two concise sentences otherwise. if no subject say you are unable to infer anything. "
-            "Do not invent any details, or say what you think the email is likely about. JUST  do not.\n\n"
+            "Summarize in exactly two concise sentences otherwise. If no subject say you are unable to infer anything. "
+            "Do not invent any details.\n\n"
             f"Subject: {subject}\n\nSummary:"
         )
 
     elif has_pdf:
-        # One or more PDFs present
         prompt_text = (
             "You are an expert email summarizer. Summarize the following email body and PDF attachment(s) "
             "in exactly two concise sentences—no bullet points or numbering. "
             "Include the main action or request, any critical dates or links.\n\n"
             f"Email + PDF content:\n\"\"\"\n{full_text}\n\"\"\"\n\nSummary:"
         )
-    
+
     else:
-        # Normal case (text only or HTML/plain fallback)
         prompt_text = (
             "You are an expert email summarizer. Summarize the following email in exactly two "
             "concise sentences—no bullet points or numbering. Include the sender (or their role), "
@@ -314,7 +327,6 @@ def latest_email():
             f"Email content:\n\"\"\"\n{full_text}\n\"\"\"\n\n"
             f"Subject: {subject}\n\nSummary:"
         )
-
 
     try:
         response = client.chat.completions.create(
@@ -333,6 +345,7 @@ def latest_email():
         "body_text": body_text,
         "summary": summary
     })
+
 
 
 import requests
@@ -580,44 +593,63 @@ def pdf_to_text(pdf_bytes: bytes) -> str:
 
 def extract_email_text(msg, service) -> str:
     """
-    Pull text/plain, convert text/html to markdown, and extract all PDFs.
-    Returns the concatenated text.
+    Extracts readable content from a Gmail message object:
+    1. Plaintext or HTML body (converted to markdown)
+    2. All PDF attachments (converted to text)
+    3. Falls back to snippet if nothing else is found
     """
+
+    def decode_body(part):
+        if "data" in part.get("body", {}):
+            return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
+        return ""
+
     texts = []
+    payload = msg.get("payload", {})
+    parts = payload.get("parts", [])
 
-    # — 1) Plain text part (first one only) —
-    for p in msg["payload"].get("parts", []):
-        if p.get("mimeType") == "text/plain" and p.get("body", {}).get("data"):
-            txt = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-            texts.append(txt)
-            break
-
-    # — 2) HTML part fallback (first one only) —
-    if not texts:
-        for p in msg["payload"].get("parts", []):
-            if p.get("mimeType") == "text/html" and p.get("body", {}).get("data"):
-                raw = base64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8")
-                md = html2text.html2text(raw)
-                texts.append(md)
+    # — 1) Plaintext —
+    for part in parts:
+        if part.get("mimeType") == "text/plain":
+            txt = decode_body(part)
+            if txt.strip():
+                texts.append(txt)
                 break
 
-    # — 3) PDF attachments (all of them) —
-    for p in msg["payload"].get("parts", []):
-        if p.get("filename") and p["body"].get("attachmentId"):
-            if p.get("mimeType") == "application/pdf":
+    # — 2) HTML (only if no plain text) —
+    if not texts:
+        for part in parts:
+            if part.get("mimeType") == "text/html":
+                raw_html = decode_body(part)
+                if raw_html.strip():
+                    md = html2text.html2text(raw_html)
+                    texts.append(md)
+                    break
+
+    # — 3) PDF Attachments (all) —
+    for part in parts:
+        if (
+            part.get("filename") and part.get("mimeType") == "application/pdf"
+            and part["body"].get("attachmentId")
+        ):
+            try:
                 att = service.users().messages().attachments().get(
                     userId="me",
                     messageId=msg["id"],
-                    id=p["body"]["attachmentId"]
+                    id=part["body"]["attachmentId"]
                 ).execute()
                 pdf_bytes = base64.urlsafe_b64decode(att["data"])
-                texts.append(pdf_to_text(pdf_bytes))
+                pdf_text = pdf_to_text(pdf_bytes)
+                if pdf_text.strip():
+                    texts.append(pdf_text)
+            except Exception as e:
+                print(f"⚠️ PDF extraction failed: {e}")
 
-    # Fallback to snippet if nothing found
+    # — 4) Fallback: use snippet —
     if not texts and msg.get("snippet"):
         texts.append(msg["snippet"])
 
-    return "\n\n".join(texts)
+    return "\n\n".join(texts).strip()
 
 @app.route("/attachments_summary")
 def attachments_summary():
