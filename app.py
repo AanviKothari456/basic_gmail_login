@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 import html2text
 import requests
 from openai import OpenAI
-
+full_text = extract_email_text(msg, service)
 import html2text
 
 from googleapiclient.discovery import build
@@ -591,7 +591,7 @@ def pdf_to_text(pdf_bytes: bytes) -> str:
     full = "\n\n".join(chunks).strip()
     return full or "[No extractable text in PDF]"
 
-def, service) -> str:
+def extract_email_text(msg, service) -> str:
     """
     Extracts readable content from a Gmail message object:
     1. Plaintext or HTML body (converted to markdown)
