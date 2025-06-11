@@ -296,7 +296,7 @@ def latest_email():
             )
             body_html = safe.replace("\n", "<br>")
 
-        full_text =, service)
+        full_text = extract_email_text(msg, service)
         has_pdf = any(p.get("mimeType") == "application/pdf" for p in parts)
         has_image = any(p.get("mimeType", "").startswith("image/") for p in parts)
 
