@@ -217,7 +217,7 @@ def latest_email():
 
     msg_id = request.args.get("msg_id")
     only_unread = request.args.get("only_unread", "false").lower() == "true"
-
+    sender = "someone"
     if not msg_id:
         results = service.users().messages().list(
             userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
@@ -243,7 +243,10 @@ def latest_email():
         for m in unread_msgs:
             combined_text += extract_email_text(m, service) + "\n\n"
             subject = next((h["value"] for h in m["payload"]["headers"] if h["name"] == "Subject"), "")
-            if subject: combined_subjects.append(subject)
+            if subject: 
+                combined_subjects.append(subject)
+            if sender == "someone":
+                sender = next((h["value"] for h in m["payload"]["headers"] if h["name"] == "From"), "someone")
 
         subject = combined_subjects[-1] if combined_subjects else "No Subject"
         full_text = combined_text.strip()
