@@ -51,6 +51,8 @@ SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar",
 ]
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
@@ -756,6 +758,73 @@ def unread_threads_summary():
 
     return jsonify({"threads": summaries})
 
+
+@app.route("/add_to_calendar", methods=["POST"])
+def add_to_calendar():
+    msg_id = request.json.get("msg_id")
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    gmail = build("gmail", "v1", credentials=creds)
+    calendar = build("calendar", "v3", credentials=creds)
+
+    try:
+        msg = gmail.users().messages().get(userId="me", id=msg_id, format="full").execute()
+        body = get_message_text(msg).lower()
+
+        # VERY simple date/time guess — replace with GPT or better regex later
+        title = "Meeting from Email"
+        summary = msg["snippet"]
+        start_time = "2025-06-13T15:00:00"  # Placeholder: Friday 3pm
+        end_time = "2025-06-13T16:00:00"
+
+        event = {
+            "summary": title,
+            "description": summary,
+            "start": {"dateTime": start_time, "timeZone": "Asia/Kolkata"},
+            "end": {"dateTime": end_time, "timeZone": "Asia/Kolkata"},
+        }
+
+        calendar.events().insert(calendarId="primary", body=event).execute()
+        return jsonify({"status": "event created"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/mark_important", methods=["POST"])
+def mark_important():
+    msg_id = request.json.get("msg_id")
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    try:
+        service.users().messages().modify(
+            userId="me",
+            id=msg_id,
+            body={"addLabelIds": ["IMPORTANT"]}
+        ).execute()
+        return jsonify({"status": "marked important"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/delete_email", methods=["POST"])
+def delete_email():
+    msg_id = request.json.get("msg_id")
+    creds = google.oauth2.credentials.Credentials(**session["credentials"])
+    service = build("gmail", "v1", credentials=creds)
+
+    try:
+        service.users().messages().trash(userId="me", id=msg_id).execute()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def get_message_text(message):
+    parts = message["payload"].get("parts", [])
+    if parts:
+        for part in parts:
+            if part["mimeType"] == "text/plain":
+                return base64.urlsafe_b64decode(part["body"]["data"]).decode()
+    else:
+        return base64.urlsafe_b64decode(message["payload"]["body"]["data"]).decode()
+    return ""
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
