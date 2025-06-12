@@ -795,8 +795,8 @@ def add_to_calendar():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/mark_important", methods=["POST"])
-def mark_important():
+@app.route("/mark_starred", methods=["POST"])
+def mark_starred():
     msg_id = request.json.get("msg_id")
     creds = google.oauth2.credentials.Credentials(**session["credentials"])
     service = build("gmail", "v1", credentials=creds)
