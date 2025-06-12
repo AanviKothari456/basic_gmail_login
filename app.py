@@ -805,9 +805,9 @@ def mark_important():
         service.users().messages().modify(
             userId="me",
             id=msg_id,
-            body={"addLabelIds": ["IMPORTANT"]}
+            body={"addLabelIds": ["STARRED"]}
         ).execute()
-        return jsonify({"status": "marked important"})
+        return jsonify({"status": "starred"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
