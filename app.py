@@ -260,6 +260,9 @@ def latest_email():
             "No Subject"
         )
 
+        sender = next((h["value"] for h in msg["payload"]["headers"] if h["name"] == "From"), "someone")
+
+
         payload = msg["payload"]
         parts = payload.get("parts", [])
 
@@ -345,6 +348,7 @@ def latest_email():
         "subject": subject,
         "body_html": body_html,
         "body_text": body_text,
+        "sender": sender,
         "summary": summary
     })
 
