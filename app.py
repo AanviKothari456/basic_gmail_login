@@ -58,13 +58,6 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 
 
-
-
-
-
-
-
-
 @app.route("/")
 def index():
     return "<a href='/login'>Login with Gmail</a>"
@@ -682,11 +675,15 @@ def attachments_summary():
 
 
     # 3) Summarize with OpenAI
-    prompt = (
-        "You are an expert assistant. Summarize the following email and its PDF attachments "
-        "in two concise sentences, covering key points and any critical details.\n\n"
-        f"Full content:\n{full}"
-    )
+    prompt = f"""You are an expert assistant. Summarize the following email and its PDF attachments, if any,
+    in two concise sentences, covering key points and any critical details. Make sure summary is much shorter than email.
+    Write FULL sentences without any speculation and do not call out missing details. Do not trail off mid-sentence. 
+
+    Full content:
+    {full}
+
+    Summary:"""
+
     resp = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
